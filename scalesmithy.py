@@ -1462,7 +1462,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         logger.info('\nScale Smithy Started.  The configuration file being used is:')
-        self.settings = QSettings("santabayanian", "scaletool")
+        self.settings = QSettings("santabayanian", "scale Smithy")
         logger.info(self.settings.fileName())
         # fdb = QFontDatabase()
         # print(fdb.families())
@@ -1491,7 +1491,7 @@ class MainWindow(QMainWindow):
         self.view = QGraphicsView(self.scene)
 
         if len(self.scales) == 0:
-            self.ResetAllScales()
+            self.scales = self.defaultScales()
 
         self.primaryScale = Scale(priScaleName, self.scales[priScaleName], self.scene)
         self.primaryScale.mode = priScaleMode
@@ -1747,6 +1747,10 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             chosenscales = dlg.getSelectedScales()
             logger.debug(chosenscales )
+            for akey in chosenscales:
+                self.scales[akey] = chosenscales[akey]
+            self.scale_Menu.clear()
+            self.buildScaleMenu()
         else:
             logger.debug("Canceled")
 
