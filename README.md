@@ -2,6 +2,8 @@
 
 A graphical tool for analysis of musical scales
 
+![Screenshot.png](Documentation/Screenshot.png)
+
 ## Features
 <li>Work and display scales on a chromatic circle</li>
 <li>Save and load scale families</li>
