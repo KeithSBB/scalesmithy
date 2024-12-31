@@ -1462,7 +1462,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         logger.info('\nScale Smithy Started.  The configuration file being used is:')
-        self.settings = QSettings("santabayanian", "scale Smithy")
+        self.settings = QSettings("santabayanian", "ScaleSmithy")
         logger.info(self.settings.fileName())
         # fdb = QFontDatabase()
         # print(fdb.families())
@@ -1480,7 +1480,7 @@ class MainWindow(QMainWindow):
         self.scaleEditMode = False
 
         # set app  window size and title
-        self.setWindowTitle("Scale Tool")
+        self.setWindowTitle("Scale Smithy")
 
         # scale and mode titles
         self.scaleFamilyGI = None
@@ -1541,7 +1541,8 @@ class MainWindow(QMainWindow):
         pref_action.triggered.connect(self.prefEdit)
         edit_menu.addAction(pref_action)
 
-        self.scale_Menu = menu.addMenu("&Scale")
+        #Scale Family
+        self.scale_Menu = menu.addMenu("&Scale Family")
         self.buildScaleMenu()
         self.mode_menu = menu.addMenu("&Mode")
         self.buildModeMenu()
