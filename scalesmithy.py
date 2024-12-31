@@ -1398,7 +1398,7 @@ class DocsDialog(QDialog):
 
         # TextBrowser background is a widget style, not a document style
         self.tb.setStyleSheet('background-color: #EEF;')
-        iurl = QUrl('index.html')
+        iurl = QUrl('help/index.html')
         self.tb.setSource(iurl)
         # with open('index.html', 'r') as fh:
         #     self.tb.insertHtml(fh.read())
