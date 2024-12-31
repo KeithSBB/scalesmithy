@@ -2,7 +2,7 @@
 
 A graphical tool for analysis of musical scales.
 
-![Screenshot.png](Documentation/Screenshot.png)
+![Screenshot.png](help/Screenshot.png)
 
 ## Features
 <li>Work and display scales on a chromatic circle</li>

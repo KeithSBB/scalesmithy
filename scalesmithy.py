@@ -1376,7 +1376,7 @@ class AboutDialog(QDialog):
 class DocsDialog(QDialog):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Documentation")
+        self.setWindowTitle("docs")
 
         self.layout = QVBoxLayout()
         self.backward_button = QPushButton("<")
