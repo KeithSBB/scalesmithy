@@ -32,4 +32,37 @@ FluidSynth in one of a few patterns.
 ## Installation
 requirements.txt lists the required libraries.  Primarily PyQt6
 and mido.
+A python virtual environment isolates this code and libraries
+from your system level libraries.   To create a virtual
+environment:
+
+mkdir scalesmithy
+cd scalesmithy
+python -m venv venu
+
+To activate the new virtual environment:
+```commandline
+source venu/bin/activate
+```
+To deactivate:
+```commandline
+deactivate
+```
+While inside the activated virtual environment, 
+you can use pip to install Python packages 
+without affecting the system-wide Python installation.
+### Method 1:
+```
+git clone https://github.com/KeithSBB/scalesmithy.git
+cd scalesmithy
+sudo python setup.py install
+```
+### Method 2
+```commandline
+pip install git+https://github.com/KeithSBB/scalesmithy.git 
+```
+### Method 3
+```commandline
+pip install -r requirements.txt
+```
 
