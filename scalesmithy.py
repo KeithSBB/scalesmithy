@@ -14,7 +14,8 @@ from enum import Enum, property, Flag, auto
 from math import sin, cos, pi, radians, sqrt
 
 from PyQt6.QtCore import QSize, Qt, QPoint, QPointF, QSettings, QLineF, QRegularExpression, QUrl
-from PyQt6.QtGui import QAction, QIcon, QBrush, QPen, QFont, QPainter, QPixmap, QRegularExpressionValidator, QColor
+from PyQt6.QtGui import QAction, QIcon, QBrush, QPen, QFont, QPainter, QPixmap, QRegularExpressionValidator, \
+                         QColor, QScreen
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog, QPrintPreviewDialog
 from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsEllipseItem, \
     QGraphicsTextItem, QGraphicsLineItem, QMessageBox, QDialog, QDialogButtonBox, QVBoxLayout, QLabel, QRadioButton, \
@@ -1362,14 +1363,16 @@ class Chorder():
         return (chordNames, hovertext)
 
 class AboutDialog(QDialog):
-    def __init__(self):
+    def __init__(self, parent):
         super().__init__()
         self.setWindowTitle("Scale Smithy")
-        self.label = QLabel("Scale Smithy v0.1")
+        self.label1 = QLabel("Scale Smithy v0.1")
+        self.label2 = QLabel(f"Location of config file:\n {parent.settings.fileName()}")
         self.button = QPushButton("Close")
         self. button.clicked.connect(self.accept)
         self.layout = QVBoxLayout()
-        self.layout.addWidget(self.label)
+        self.layout.addWidget(self.label1)
+        self.layout.addWidget(self.label2)
         self.layout.addWidget(self.button)
         self.setLayout(self.layout)
 
@@ -1520,11 +1523,16 @@ class MainWindow(QMainWindow):
         print_action = QAction( "Print", self)
         print_action.triggered.connect(self.print)
         file_menu.addAction(print_action)
-        createPDF_action = QAction(QIcon("bug.png"), "Create &PDF", self)
-        file_menu.addAction(createPDF_action)
+
+        createIMG_action = QAction(QIcon("bug.png"), "Save &Image", self)
+        createIMG_action.triggered.connect(self.image)
+        file_menu.addAction(createIMG_action)
 
         # Edit Menu
         edit_menu = menu.addMenu("&Edit")
+        cpyedit = QAction("Copy", self)
+        cpyedit.triggered.connect(self.copy)
+        edit_menu.addAction(cpyedit)
         fscEdit = QAction("Find Scale", self)
         fscEdit.triggered.connect(self.findScale)
         edit_menu.addAction(fscEdit)
@@ -1740,20 +1748,21 @@ class MainWindow(QMainWindow):
 
     def load(self):
         fileNameInfo = QFileDialog.getOpenFileName(self, "Load Scales", "", "JSON Files (*.json)")
-        with open(fileNameInfo[0], "r") as fp:
-            ldscales = json.load(fp)
-        dlg = ScaleSelect(self, ("Select which scales to load from file.\n" +
-                                 "Red indicates a conflict that will \n" +
-                                 "overwrite an existing scale"),ldscales, self.scales)
-        if dlg.exec():
-            chosenscales = dlg.getSelectedScales()
-            logger.debug(chosenscales )
-            for akey in chosenscales:
-                self.scales[akey] = chosenscales[akey]
-            self.scale_Menu.clear()
-            self.buildScaleMenu()
-        else:
-            logger.debug("Canceled")
+        if len(fileNameInfo[0]) > 0:
+            with open(fileNameInfo[0], "r") as fp:
+                ldscales = json.load(fp)
+            dlg = ScaleSelect(self, ("Select which scales to load from file.\n" +
+                                     "Red indicates a conflict that will \n" +
+                                     "overwrite an existing scale"),ldscales, self.scales)
+            if dlg.exec():
+                chosenscales = dlg.getSelectedScales()
+                logger.debug(chosenscales )
+                for akey in chosenscales:
+                    self.scales[akey] = chosenscales[akey]
+                self.scale_Menu.clear()
+                self.buildScaleMenu()
+            else:
+                logger.debug("Canceled")
 
     def findScale(self):
         dlg = FindScale(self.scales)
@@ -1983,7 +1992,7 @@ class MainWindow(QMainWindow):
         self.drawScale()
 
     def about(self):
-        about_dialog = AboutDialog()
+        about_dialog = AboutDialog(self)
         about_dialog.exec()
 
     def documentation(self):
@@ -2116,6 +2125,19 @@ class MainWindow(QMainWindow):
             painter.end()
 
             # Print the pixmap  # pixmap.print_(printer)
+
+    def image(self):
+        fileNameInfo = QFileDialog.getSaveFileName(self, "Save Image File", "", "png, jpeg, bmp")
+        if len(fileNameInfo[0]) > 0:
+            pixmap = self.grab()
+            clipboard = QApplication.instance().clipboard()
+            pixmap.save(fileNameInfo[0], fileNameInfo[1])
+
+    def copy(self):
+        pixmap = self.grab()
+        clipboard = QApplication.instance().clipboard()
+        clipboard.setPixmap(pixmap)
+
     def playSynth(self):
         '''
         Plays the scale on fluid synth
