@@ -7,15 +7,16 @@ import math
 import copy
 import json
 import time
+import random
 import re
 import logging
 from collections import deque
 from enum import Enum, property, Flag, auto
 from math import sin, cos, pi, radians, sqrt
 
-from PyQt6.QtCore import QSize, Qt, QPoint, QPointF, QSettings, QLineF, QRegularExpression, QUrl
+from PyQt6.QtCore import (QSize, Qt, QPoint, QPointF, QSettings, QLineF, QRegularExpression, QUrl, QTimer, QDir)
 from PyQt6.QtGui import QAction, QIcon, QBrush, QPen, QFont, QPainter, QPixmap, QRegularExpressionValidator, \
-                         QColor, QScreen
+                         QColor, QScreen,    QTextDocument
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog, QPrintPreviewDialog
 from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsEllipseItem, \
     QGraphicsTextItem, QGraphicsLineItem, QMessageBox, QDialog, QDialogButtonBox, QVBoxLayout, QLabel, QRadioButton, \
@@ -24,9 +25,12 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphics
 
 import mido
 
+QDir.addSearchPath('help', 'help/')
+
+
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.StreamHandler())
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 sharp = '<sup>#</sup>'
@@ -931,6 +935,17 @@ class Scale:
     '''
     The scale class encapsulates all data and methods for a particular scale family with 
     variable mode and key signature.
+    param name:  The name of the scale family
+    param scaleDef: A two element list containing:
+                                firstModeIntervals in scaledef[0]
+                                list of mode names in scaleDef[1]
+    param scene:  The pyQt6 scene
+
+    Note: firstModeIntervals are the intervals for the first (0 index) mode in semitones between the
+          root tone - > 2nd scale degree,   2nd scale degree -> 3rd,
+          3rd -> 4th, .... last scale degree -> root.  If there are 7 notes in a
+          scale then there will be 7 intervals.  For octave scales the sum of the intervals = 12
+          EX: Diatonic: Ionion mode (Maj): [2, 2, 1, 2, 2, 2, 1]
     '''
     allKeys = ["None", "C", "C" + sharp + '/D' + flat, "D", "D" + sharp + "/E" + flat, "E", "F",
                "F" + sharp + "/G" + flat, "G", "G" + sharp + "/A" + flat, "A", "A" + sharp + "/B" + flat, "B"]
@@ -941,14 +956,20 @@ class Scale:
         logger.info(f"Scale created: {name}")
         logger.debug(scaleDef)
         self.modes = scaleDef[1]
-        self.intervals = deque(scaleDef[0])
+        self.firstModeIntervals = deque(scaleDef[0])
         self.modeIndx = 0
         self.scene = scene
         self._key = None
-        self.GetNotePositions()
-        self.ReorderNoteNames()
+        self._noteSemitonePositions = []
+        self._notes = []
+        self.CalculateModeNotePositions()
+        self.CalculateNoteNames()
         self.graphicItems = []
         self.noteMidiNum = dict(zip(Scale.allKeys, [0, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71]))
+
+    @property
+    def numOfNotes(self):
+        return len(self.firstModeIntervals)
 
     @property
     def mode(self):
@@ -959,9 +980,9 @@ class Scale:
         try:
             self.modeIndx = self.modes.index(amode)
         except:
-            logger.warn('Bad mode recalled')
-        self.GetNotePositions()
-        self.ReorderNoteNames()
+            logger.warning('Bad mode recalled')
+        self.CalculateModeNotePositions()
+        self.CalculateNoteNames()
         self.deleteGraphicItems()
 
     @property
@@ -974,35 +995,40 @@ class Scale:
             self._key = None
         else:
             self._key = newKey
-        self.ReorderNoteNames()
+        self.CalculateNoteNames()
         self.deleteGraphicItems()
 
-    def GetNotes(self):
-        return self.notes
+    @property
+    def notes(self):
+        return self._notes
 
-    def NotePositions(self):
-        return self.sindx
+    @property
+    def noteSemitonePositions(self):
+        return self._noteSemitonePositions
 
-    def GetNotePositions(self):
-        rotIntvls = self.intervals.copy()
-        rotIntvls.rotate(-self.modeIndx)
+    def CalculateModeNotePositions(self):
+        self._noteSemitonePositions = self.getModeDegRelPositions(self.modeIndx)
+        logger.debug(f" scale index = {self._noteSemitonePositions}")
+
+    def getModeDegRelPositions(self, modeIndx, scaledeg=1):
+        rotIntvls = self.firstModeIntervals.copy()
+        rotIntvls.rotate(-(self.modeIndx + scaledeg -1))
         rotIntvls.appendleft(0)
-        self.sindx = Cumulative(list(rotIntvls))
-        logger.debug(f" scale index = {self.sindx}")
+        return Cumulative(list(rotIntvls))
 
-    def ReorderNoteNames(self):
+    def CalculateNoteNames(self):
         """Given the root note the 12 notes are reordered starting with the root note.
         Note that the first item in Scale.keys is 'none' that is why Scale.keys[1:] is
         used below as it starts with 'C'  """
         if self._key == "none" or not self._key:
             # no note was selected for the root, relative scale members will be shown with roman numerals
-            self.notes = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'][:len(self.intervals)]
+            self._notes = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'][:self.numOfNotes]
         else:
             # construct a chromatic list of 12 notes starting with the root
             offset = Scale.allKeys[1:].index(self._key)
-            self.notes = [Scale.allKeys[1:][(i + offset) % len(Scale.allKeys[1:])] for i, x in
+            self._notes = [Scale.allKeys[1:][(i + offset) % len(Scale.allKeys[1:])] for i, x in
                           enumerate(Scale.allKeys[1:])]
-            self.notes = [self.notes[i] for i in self.sindx[:-1]]
+            self._notes = [self.notes[i] for i in self._noteSemitonePositions [:-1]]
 
 
 
@@ -1031,8 +1057,7 @@ class Scale:
                  rmax * sin(radians(angOffset + (semitoneDelta * 30))))
         pts = []
 
-        chordNames, hoverText = chorder.getChordNames(self.sindx, self.notes, self.intervals, level=chordLevel)
-        for scaleDeg, i in enumerate(self.sindx):
+        for scaleDeg, i in enumerate(self._noteSemitonePositions ):
             a = radians(angOffset + (i + semitoneDelta) * 30)
             r = rmax
             x = r * cos(a)
@@ -1045,10 +1070,13 @@ class Scale:
 
             if i < 12:
                 noteName = self.notes[scaleDeg]
-                chName= chordNames[scaleDeg]
+                relchordtonepos = self.getModeDegRelPositions(self.modeIndx, scaleDeg+1)
+                logger.debug(f"INPUT TO CHORDER: {noteName} has {relchordtonepos}")
+                chName, hoverText = chorder.getChordNames(noteName, relchordtonepos, level=chordLevel)
+
                 gitem = drawText(self.scene, [0.85 * (xt + x0), 0.85 * (yt + y0)], chName, size=14, txtWidth=0,
                                  position=Pos.RADIAL_IN, refPt=[x0, y0], tcolor=pen.color())
-                gitem.setToolTip(hoverText[scaleDeg])
+                gitem.setToolTip(hoverText)
                 self.graphicItems.append(gitem)
 
             pts.append((x, y))
@@ -1177,7 +1205,7 @@ class Chorder():
         text = pattern.sub(lambda m: rep[re.escape(m.group(0))], raw)
         return text
 
-    def getChordNames(self, sindx, notes, sintervals, level=ChordLevel.OFF):
+    def getChordNames(self, noteName, relchordTonePos, level=ChordLevel.OFF):
         '''
         this method takes a scale, the scale degree and the note at that scale degree and returns a string
         of chords at Note that fit in the scale.  This provides an aid in music composition as to what chords
@@ -1316,51 +1344,38 @@ class Chorder():
         elif level == ChordLevel.ALL:
             ctstop = len(chordTypes.keys())
 
-        for scaleDeg in range(len(sindx) - 1):
+        if level == ChordLevel.OFF:
+            chordNames.append(f'<p>{noteName} </p>')
+            hovertext.append("Change displayed chords \nthru edit->preference")
+        else:
+            cName = ''
+            htxt = ''
+            for ctindx, achdtypints in enumerate(chordTypes):
+                if ctindx > ctstop:
+                    if len(cName) != 0:
+                        continue
+                if all(elem in relchordTonePos for elem in achdtypints):
+                    for chdName in chordTypes[achdtypints]:
+                        fullChdNam = self.chordformater(chdName)
+                        hoverTxt = chordTypes[achdtypints][chdName][0]
 
-            if level == ChordLevel.OFF:
-                chordNames.append(f'<p>{notes[scaleDeg]} </p>')
-                hovertext.append("Change displayed chords \nthru edit->preference")
+                        break
+
+                    if len(cName) == 0:
+                        cName =  fullChdNam
+                        htxt =  hoverTxt
+                    else:
+                        cName = cName + ', ' + fullChdNam
+                        htxt = htxt + ', \n' + hoverTxt
+            # print(self.notes)
+            if len(cName) == 0:
+                cName = f'<p>{noteName}: {relchordTonePos} </p>'
             else:
-                intervals = sintervals.copy()
-                intervals.rotate(-scaleDeg)
-                intervals = deque(list(intervals))
+                cName = f'<p>{noteName}: ' + cName + '</p>'
 
-                semitones = Cumulative(list(intervals))
-                semitones.insert(0, 0)
-                logger.debug(f"{scaleDeg}, {semitones}")
 
-                cName = ''
-                htxt = ''
-                for ctindx, achdtypints in enumerate(chordTypes):
-                    if ctindx > ctstop:
-                        if len(cName) != 0:
-                            continue
-                    if all(elem in semitones for elem in achdtypints):
-                        for chdName in chordTypes[achdtypints]:
-                            fullChdNam = self.chordformater(chdName)
-                            hoverTxt = chordTypes[achdtypints][chdName][0]  # TODO:
 
-                            break  # TODO:
-
-                        if len(cName) == 0:
-                            cName =  fullChdNam
-                            htxt =  hoverTxt
-                        else:
-                            cName = cName + ', ' + fullChdNam
-                            htxt = htxt + ', \n' + hoverTxt
-                # print(self.notes)
-                if len(cName) == 0:
-                    cName = f'<p>{notes[scaleDeg]}: {semitones} </p>'
-                else:
-                    cName = f'<p>{notes[scaleDeg]}: ' + cName + '</p>'
-
-                chordNames.append(cName)
-                hovertext.append(htxt)
-                #print(chordNames)
-                #print(hovertext)
-
-        return (chordNames, hovertext)
+        return (cName, htxt)
 
 class AboutDialog(QDialog):
     def __init__(self, parent):
@@ -1379,7 +1394,7 @@ class AboutDialog(QDialog):
 class DocsDialog(QDialog):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("docs")
+        self.setWindowTitle("Documentation")
 
         self.layout = QVBoxLayout()
         self.backward_button = QPushButton("<")
@@ -1391,7 +1406,7 @@ class DocsDialog(QDialog):
         hlayout.addStretch()
         self.layout.addLayout(hlayout)
 
-        self.label = QLabel("Table of contents")
+        self.label = QLabel("Table of Contents")
         self.tb = QTextBrowser(minimumWidth=800, minimumHeight=600)
         self.tb.document().setDefaultStyleSheet(
             'body {color: #333; font-size: 14px;} '
@@ -1401,9 +1416,11 @@ class DocsDialog(QDialog):
 
         # TextBrowser background is a widget style, not a document style
         self.tb.setStyleSheet('background-color: #EEF;')
-        iurl = QUrl('help/index.html')
+
+        iurl = QUrl('help/index.md')
         self.tb.setSource(iurl)
-        # with open('index.html', 'r') as fh:
+        self.tb.setSearchPaths(['help'])
+        # with open('index.md', 'r') as fh:
         #     self.tb.insertHtml(fh.read())
 
         self.tb.setAcceptRichText(True)
@@ -1435,9 +1452,8 @@ class FaqDialog(QDialog):
 
         # TextBrowser background is a widget style, not a document style
         self.tb.setStyleSheet('background-color: #EEF;')
-        with open('faq.html', 'r') as fh:
-            self.tb.insertHtml(fh.read())
-
+        iurl = QUrl('help/faq.md')
+        self.tb.setSource(iurl)
         self.tb.setAcceptRichText(True)
         self.tb.setOpenExternalLinks(True)
         self.button = QPushButton("Close")
@@ -1451,7 +1467,7 @@ class FaqDialog(QDialog):
 class ContactDialog(QDialog):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AContact")
+        self.setWindowTitle("Contact Info")
         self.label = QLabel("keith@github.com")
         self.button = QPushButton("Close")
         self.button.clicked.connect(self.accept)
@@ -1568,6 +1584,9 @@ class MainWindow(QMainWindow):
         swapRef_action = QAction("Swap Ref <-> Primary", self)
         swapRef_action.triggered.connect(self.swapRef)
         refScaleMenu.addAction(swapRef_action)
+        autoran_action = QAction("Toggle random run", self)
+        autoran_action.triggered.connect(self.randomrun)
+        refScaleMenu.addAction((autoran_action))
 
         #Midi Menu
         midiMenu = menu.addMenu("MIDI")
@@ -1577,6 +1596,7 @@ class MainWindow(QMainWindow):
         midiSettings_action = QAction('MIDI Settings', self)
         midiSettings_action.triggered.connect(self.midiSettings)
         midiMenu.addAction(midiSettings_action)
+
 
         # Help menu
         helpmenu = menu.addMenu("Help")
@@ -1602,6 +1622,9 @@ class MainWindow(QMainWindow):
         self.brush = Brushes()
         # Pens for lines
         self.pen = Pens()
+
+        #Qtimer for random run
+        self.timer = QTimer(self, timeout=self.update_ran)
 
         # draw chromatic circle and stradella layout 
         self.drawChromCircle()
@@ -1914,9 +1937,10 @@ class MainWindow(QMainWindow):
 
     def setRef(self):
         self.clearRef()
-        refScaleName = copy.copy(self.primaryScale.name)
-        refScaleMode = copy.copy(self.primaryScale.mode)
-        refScaleKey = copy.copy(self.primaryScale.key)
+        print("setRef called")
+        refScaleName = copy.deepcopy(self.primaryScale.name)
+        refScaleMode = copy.deepcopy(self.primaryScale.mode)
+        refScaleKey = copy.deepcopy(self.primaryScale.key)
         self.refScale = Scale(refScaleName, self.scales[refScaleName], self.scene)
         self.refScale.mode = refScaleMode
         self.refScale.key = refScaleKey
@@ -2108,8 +2132,7 @@ class MainWindow(QMainWindow):
         rmax = 200
         angOffset = self.angOffset
         pen = self.pen.red
-        chordLevel = ChordLevel.OFF
-        self.refScale.drawScale(x0, y0, rmax, angOffset, pen, chordLevel, self.chorder, alignNote=self.primaryScale.key)
+        self.refScale.drawScale(x0, y0, rmax, angOffset, pen, self.chordNameLevel, self.chorder, alignNote=self.primaryScale.key)
 
     def print(self):
         print("create imgae called")
@@ -2144,6 +2167,37 @@ class MainWindow(QMainWindow):
         :return:
         '''
         self.primaryScale.playScale(self.midiPortName, self.midiProgNum, self.midiTempo, self.midiNumOctaves, self.midiPattern)
+
+    def randomrun(self):
+        # setRef
+        #   randomly choose a key,  scale family and mode
+        # set primary to this new scaleinfo
+        # repeat ...
+        if self.timer.isActive():
+            self.timer.stop()
+        else:
+            self.timer.start(1000)  #
+
+
+    def update_ran(self):
+        self.setRef()
+
+        newsf = random.choice(list(self.scales.keys()))
+        newScale = Scale(newsf, self.scales[newsf], self.scene)
+        newMode = random.choice(newScale.modes)
+        newScale.mode = newMode
+        newKey = random.choice(Scale.allKeys[1:])
+        newScale.key = newKey
+        self.primaryScale.deleteGraphicItems()
+        self.primaryScale = newScale
+
+        self.drawScale()
+
+        self.drawTitle()
+
+
+
+
 
 
 if __name__ == '__main__':
