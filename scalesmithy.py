@@ -3,55 +3,40 @@ Created on Nov 10, 2024
 
 @author: keith
 '''
-import math
+import argparse
 import copy
 import json
-import time
-import random
-import re
 import logging
-from collections import deque
-from enum import Enum, property, Flag, auto
-from math import sin, cos, pi, radians, sqrt
+import random
 
-from PyQt6.QtCore import (QSize, Qt, QPoint, QPointF, QSettings, QLineF, QRegularExpression, QUrl, QTimer, QDir)
-from PyQt6.QtGui import QAction, QIcon, QBrush, QPen, QFont, QPainter, QPixmap, QRegularExpressionValidator, \
-                         QColor, QScreen,    QTextDocument
-from PyQt6.QtPrintSupport import QPrinter, QPrintDialog, QPrintPreviewDialog
-from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsEllipseItem, \
-    QGraphicsTextItem, QGraphicsLineItem, QMessageBox, QDialog, QDialogButtonBox, QVBoxLayout, QLabel, QRadioButton, \
-    QComboBox, QWidgetAction, QCheckBox, QLineEdit, QGridLayout, QHBoxLayout, QPushButton, QButtonGroup, \
-    QGroupBox, QLineEdit, QGraphicsRectItem, QTextBrowser, QFileDialog, QListWidget, QListWidgetItem
+from collections import deque
+from enum import Enum
+from math import sin, cos, pi
+
+from PyQt6.QtCore import (QSize, Qt, QPoint, QSettings, QRegularExpression, QUrl, QTimer)
+from PyQt6.QtGui import QAction, QIcon, QPainter, QRegularExpressionValidator
+from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
+from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QMessageBox, QDialog, QDialogButtonBox, QVBoxLayout, QLabel, QRadioButton, \
+    QComboBox, QWidgetAction, QCheckBox, QGridLayout, QHBoxLayout, QPushButton, QButtonGroup, \
+    QGroupBox, QLineEdit, QTextBrowser, QFileDialog, QListWidget, QListWidgetItem
 
 import mido
+import argparse
 
-QDir.addSearchPath('help', 'help/')
+parser = argparse.ArgumentParser(
+        prog='Scale smithy',
+        description='Musical Scale analysis Application',
+        epilog='-by Keith Smith')
+parser.add_argument("-loglevel", nargs=1,
+                    default=["INFO"], help="Enter INFO, DEBUG, WARNING, CRITICAL, or ERROR ")
 
+args = parser.parse_args()
 
+logging.basicConfig(level=args.loglevel[0], handlers=[logging.StreamHandler()])
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.StreamHandler())
-logger.setLevel(logging.DEBUG)
 
-
-sharp = '<sup>#</sup>'
-flat = '<sup>♭</sup>'
-
-class Pos(Enum):
-    LEFT_CENTER = 1
-    CENTER = 2
-    RIGHT_CENTER = 3
-    RADIAL_IN = 4
-    RADIAL_OUT = 5
-
-class MidiPattern(Flag):
-    # supports: opts = MidiPattern.LINEAR_UP | MidiPattern.LINEAR_DOWN; MidiPattern.PATTERN_UP in opts
-    NONE = auto()
-    LINEAR_UP = auto()
-    LINEAR_DOWN = auto()
-    PATTERN_UP = auto()
-    PATTERN_DOWN = auto()
-    ARPEGGIO_UP = auto()
-    ARPEGGIO_DOWN = auto()
+from musicalclasses import Scale, Chorder, StradellaBass, ChordLevel, ChordSymbol, MidiPattern
+from utils import drawText, drawCircle, Pos, Brushes, Pens, CircleGraphicsItem
 
 
 class RootPosition(Enum):
@@ -61,218 +46,10 @@ class RootPosition(Enum):
     R6 = 90
 
 
-class ChordLevel(Enum):
-    OFF = 0
-    BASIC_ACCORD = 1
-    ADV_ACCORD = 2
-    ALL = 3
-
-class ChordSymbol(Enum):
-    RAW = 0
-    JAZZ = 1
-    COMMON = 2
-
-
-class Brushes:
-    def __init__(self):
-        self.none = QBrush(Qt.BrushStyle.NoBrush)
-        self.white = QBrush(Qt.GlobalColor.white)
-        self.black = QBrush(Qt.GlobalColor.black)
-        self.red = QBrush(Qt.GlobalColor.red)
-        self.blue = QBrush(Qt.GlobalColor.blue)
-        self.green = QBrush(Qt.GlobalColor.green)
-
-
-class Pens:
-    def __init__(self):
-        self.black = QPen(Qt.GlobalColor.black)
-        self.black.setWidth(3)
-        self.red = QPen(Qt.GlobalColor.red)
-        self.red.setWidth(3)
-        self.blue = QPen(Qt.GlobalColor.blue)
-        self.blue.setWidth(3)
-        self.green = QPen(Qt.GlobalColor.green)
-        self.green.setWidth(3)
-
-def Cumulative(lists):
-    cu_list = []
-    length = len(lists)
-    cu_list = [sum(lists[0:x:1]) for x in range(0, length + 1)]
-    return cu_list[1:]
-
-def drawText(scene, pt, text, size=10, position=Pos.CENTER, refPt=[0,0], tcolor=Qt.GlobalColor.black, txtWidth=None):
-    ''' drawText draws text relative to the position of the bounding box.  x, y define where that
-    boundary box position will be located.
-    '''
-    font = QFont('[bold]')
-    # print(QFontInfo(font).family())
-    font.setPointSize(size)
-    strItem = QGraphicsTextItem()
-    #strItem.setToolTip("This is the hover text")
-
-    strItem.setDefaultTextColor(tcolor)
-    strItem.setFont(font)
-
-    if text[:3] == '<p>':
-        strItem.setHtml(text)
-    else:
-        strItem.setPlainText(text)
-
-    fm = strItem.font()
-
-    if txtWidth is not None:
-        if txtWidth > 0:
-            strItem.setTextWidth(txtWidth)
-        else:
-            #Resize to Squarish shape  - This helps with radial positioning
-            w = strItem.boundingRect().width()
-            h = strItem.boundingRect().height()
-            s = sqrt(w * h)
-            strItem.setTextWidth(s)
-
-
-    xoffset = 0
-    yoffset = 0
-
-
-    if position == Pos.CENTER:
-        xoffset = strItem.boundingRect().center().x()
-        yoffset = strItem.boundingRect().center().y()
-    elif position == Pos.LEFT_CENTER:
-        xoffset = strItem.boundingRect().bottomRight().x()
-        yoffset = strItem.boundingRect().center().y()
-    elif position == Pos.RIGHT_CENTER:
-        xoffset = 0
-        yoffset = strItem.boundingRect().center().y()
-    elif position == Pos.RADIAL_IN:
-        # For radial in the bounding Rect is used to position the text so that the
-        # rect fits within the centered at refPt circle at point pt on the circle
-        bby = math.fabs((strItem.boundingRect().center().y() - strItem.boundingRect().bottomRight().y()))
-        bbx = math.fabs((strItem.boundingRect().center().x() - strItem.boundingRect().bottomRight().x()))
-        logger.debug(f"***** bbx = {bbx}, bby = {bby}")
-        bbang = math.atan(math.fabs(bby / bbx))
-        dx = pt[0] - refPt[0]
-        dy = pt[1] - refPt[1]
-        ang = math.atan2(dy, dx)
-
-        cang = math.atan(math.fabs(dy/dx))
-
-        logger.debug(f"cnag = {math.degrees(cang)} while bbang = {math.degrees(bbang)}")
-        if cang > bbang:
-            if cang > math.radians(89):
-                rbb = bby
-            else:
-                rbb = bby / math.sin(cang)
-        else:
-            if cang < math.radians(1):
-                rbb = bbx
-            else:
-                rbb = bbx / math.cos(cang)
-
-        logger.debug((f" rbb = {rbb}, angle = {math.degrees(ang)}"))
-        xoffset =  rbb*math.cos(ang) + strItem.boundingRect().center().x()
-        yoffset =  rbb*math.sin(ang) + strItem.boundingRect().center().y()
-        logger.debug(f"x: {xoffset} is applied to {pt[0]}")
-        logger.debug(f"y: {yoffset} is applied to {pt[1]}")
-
-    elif position == Pos.RADIAL_OUT:
-        # For radial out the bounding Rect is used to position the text so that the
-        # rect fits outside the centered at refPt circle at point pt on the circle
-        # ==================
-        #  once resized to squarish shape the following data is availble:
-        # pt = [x, y]  is the coordinate to position the text around.
-        # refPt is the center of the circular object that the text is not to overlap with
-        # strItem.boundingRect().center() is the text bounding box center x, y coordinates
-        # strItem.boundingRect().bottomRight() is as it says the x coord if width/2, y is height/2
-        # Goal: Position text so that some point on its bounding box includes pt.
-        # The bounding box center, pt and refPt form a straight line.
-        # Approach:
-        #          1. Determine which bounding box edge contains pt
-        #          2.
-        logger.debug(f"Center point = {refPt}")
-        logger.debug(pt)
-
-        bby = math.fabs((strItem.boundingRect().center().y() - strItem.boundingRect().bottomRight().y()))
-        bbx = math.fabs((strItem.boundingRect().center().x() - strItem.boundingRect().bottomRight().x()))
-        logger.debug(f"***** bbx = {bbx}, bby = {bby}")
-        bbang = math.atan(math.fabs(bby / bbx))
-
-        #rpt = sqrt((pt[0] - refPt[0]) ** 2 + (pt[1] - refPt[1]) ** 2) #Radius of reference circle
-        #logger.debug(f"Point passed to draw radius = {rpt}")
-
-        dx = pt[0] - refPt[0]
-        dy = pt[1] - refPt[1]
-        ang = math.atan2(dy, dx)
-
-        cang = math.atan(math.fabs(dy/dx))
-
-        logger.debug(f"cnag = {math.degrees(cang)} while bbang = {math.degrees(bbang)}")
-        if cang > bbang:
-            if cang > math.radians(89):
-                rbb = bby
-            else:
-                rbb = bby / math.sin(cang)
-        else:
-            if cang < math.radians(1):
-                rbb = bbx
-            else:
-                rbb = bbx / math.cos(cang)
-
-        logger.debug((f" rbb = {rbb}, angle = {math.degrees(ang)}"))
-        xoffset =  -rbb*math.cos(ang) + strItem.boundingRect().center().x()
-        yoffset =  -rbb*math.sin(ang) + strItem.boundingRect().center().y()
-        logger.debug(f"x: {xoffset} is applied to {pt[0]}")
-        logger.debug(f"y: {yoffset} is applied to {pt[1]}")
-
-
-    newx = pt[0] - xoffset
-    newy = pt[1] - yoffset
-
-    strItem.setPos(QPointF(newx, newy))
-
-    scene.addItem(strItem)
-
-    rect = strItem.boundingRect()
-
-    if txtWidth == -1:
-        rectItem = QGraphicsRectItem(rect)
-        rectItem.setPos(strItem.pos())
-        scene.addItem(rectItem)
-
-    return strItem
-
-
-def drawCircle(scene, cx, cy, d, pen, brush=None, noteId=None, acceptMousebuttons=False):
-    x = cx - d / 2
-    y = cy - d / 2
-    # x, y w h  (x,y are the lower left corner)
-    ellipse = CircleGraphicsItem(x, y, d, noteId=noteId, acceptMousebuttons=acceptMousebuttons)
-    ellipse.setPen(pen)
-    if brush:
-        ellipse.setBrush(brush)
-    scene.addItem(ellipse)
-    return ellipse
-
-
-def drawLine(scene, x1, y1, x2, y2, pen=None):
-    if not pen:
-        pen = Pens.black
-
-    # Define start and end points
-    start = QPointF(x1, y1)
-    end = QPointF(x2, y2)
-    aline = QLineF(start, end)
-
-    # Draw the line
-    alineItem = QGraphicsLineItem(aline)
-    alineItem.setPen(pen)
-    scene.addItem(alineItem)
-    return alineItem
-
-class ScaleSelect(QDialog):
+class ScaleSelectDlg(QDialog):
     def __init__(self, parent, prompt, scales, cfScales={}):
         '''
-        ScaleSelect is used when saving and loading scales.  When saving scales pass the current
+        ScaleSelectDlg is used when saving and loading scales.  When saving scales pass the current
         dict of scales via the scales argument and leave cfScales empty.  When loading scales pass the
         scales from the file via scales and the current scales vis cfScales.
         :param parent:
@@ -318,7 +95,7 @@ class ScaleSelect(QDialog):
     def accept(self):
         self.done(1)
 
-class MidiSettings(QDialog):
+class MidiSettingsDlg(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
 
@@ -516,32 +293,32 @@ class MidiSettings(QDialog):
         glayout = QGridLayout()
 
         self.linUpChkbox = QCheckBox('linear up')
-        self.linUpChkbox.setChecked(MidiPattern.LINEAR_UP in  self.parentWidget().midiPattern)
+        self.linUpChkbox.setChecked(MidiPattern.LINEAR_UP in self.parentWidget().midiPattern)
         self.linUpChkbox.toggled.connect(self.newPattern)
         glayout.addWidget(self.linUpChkbox, 0, 0)
 
         self.linDwnChkbox = QCheckBox('linear down')
-        self.linDwnChkbox.setChecked(MidiPattern.LINEAR_DOWN in  self.parentWidget().midiPattern)
+        self.linDwnChkbox.setChecked(MidiPattern.LINEAR_DOWN in self.parentWidget().midiPattern)
         self.linDwnChkbox.toggled.connect(self.newPattern)
         glayout.addWidget(self.linDwnChkbox, 1, 0)
 
         self.patUpChkbox = QCheckBox('Pattern up')
-        self.patUpChkbox.setChecked(MidiPattern.PATTERN_UP in  self.parentWidget().midiPattern)
+        self.patUpChkbox.setChecked(MidiPattern.PATTERN_UP in self.parentWidget().midiPattern)
         self.patUpChkbox.toggled.connect(self.newPattern)
         glayout.addWidget(self.patUpChkbox, 0, 1)
 
         self.patDwnChkbox = QCheckBox('Pattern down')
-        self.patDwnChkbox.setChecked(MidiPattern.PATTERN_DOWN in  self.parentWidget().midiPattern)
+        self.patDwnChkbox.setChecked(MidiPattern.PATTERN_DOWN in self.parentWidget().midiPattern)
         self.patDwnChkbox.toggled.connect(self.newPattern)
         glayout.addWidget(self.patDwnChkbox, 1, 1)
 
         self.arpUpChkbox = QCheckBox('Arpagio up')
-        self.arpUpChkbox.setChecked(MidiPattern.ARPEGGIO_UP in  self.parentWidget().midiPattern)
+        self.arpUpChkbox.setChecked(MidiPattern.ARPEGGIO_UP in self.parentWidget().midiPattern)
         self.arpUpChkbox.toggled.connect(self.newPattern)
         glayout.addWidget(self.arpUpChkbox, 0,2)
 
         self.arpDwnChkbox = QCheckBox('Arpagio down')
-        self.arpDwnChkbox.setChecked(MidiPattern.ARPEGGIO_DOWN in  self.parentWidget().midiPattern)
+        self.arpDwnChkbox.setChecked(MidiPattern.ARPEGGIO_DOWN in self.parentWidget().midiPattern)
         self.arpDwnChkbox.toggled.connect(self.newPattern)
         glayout.addWidget(self.arpDwnChkbox, 1, 2)
 
@@ -602,7 +379,7 @@ class MidiSettings(QDialog):
         self.done(1)
 
 
-class PrefEditor(QDialog):
+class PrefEditorDlg(QDialog):
     def __init__(self, parent=None, chordLevel=ChordLevel.OFF, chordSymbol=ChordSymbol.RAW, rootPos=RootPosition.R9):
         super().__init__(parent)
 
@@ -698,6 +475,11 @@ class PrefEditor(QDialog):
 
         layout.addWidget(rplabel)
         layout.addWidget(self.rootPosbox)
+
+        self.showBassChkBox = QCheckBox("Show Stradella Bass", self)
+        self.showBassChkBox.setChecked(parent.showStradella)
+        layout.addWidget(self.showBassChkBox)
+
         self.setLayout(layout)
         self.setWindowTitle("Preferences")
 
@@ -741,7 +523,7 @@ class PrefEditor(QDialog):
         # self.accept() #QDialog.accepted)
         self.done(1)
 
-class FindScale(QDialog):
+class FindScaleDlg(QDialog):
     '''
     Dialog asks for unknown slace notes and returns name of scale family, mode and key
 
@@ -836,17 +618,7 @@ class FindScale(QDialog):
             self.scaleFamlabel.setText("Not Found")
             self.modelabel.setText("Not Found")
 
-
-
-
-
-
-
-
-
-
-
-class ScaleEditor(QDialog):
+class ScaleEditorDlg(QDialog):
     '''
     Scale editor displays a scale as three data items: scale name, scale intervals (in semitones), scale modes
     The editor alows you to load, save, create new, scales.   Scales are stored in the scaletool config file
@@ -889,495 +661,7 @@ class ScaleEditor(QDialog):
         self.setLayout(layout)
 
 
-class CircleGraphicsItem(QGraphicsEllipseItem):
-    def __init__(self, x, y, d, noteId=None, acceptMousebuttons=False, parent=None):
-        super().__init__(x, y, d, d, parent)
-        self.setAcceptHoverEvents(False)
-        self.brushes = Brushes()
-        self.noteId = noteId
-        self.setSelectable(acceptMousebuttons)
-        self.isSelected = False
-
-    def setSelectable(self, state):
-        if state:
-            self.setAcceptedMouseButtons(Qt.MouseButton.AllButtons)
-        else:
-            self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-
-    def setSelectedState(self, state):
-        if state:
-            self.setBrush(self.brushes.green)
-            self.isSelected = True
-        else:
-            self.setBrush(self.brushes.white)
-            self.isSelected = False
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            print("Left mouse button pressed on item")
-            currentBrush = self.brush()
-            if currentBrush.color() == Qt.GlobalColor.white:
-                self.setBrush(self.brushes.green)
-                self.isSelected = True
-            else:
-                self.setBrush(self.brushes.white)
-                self.isSelected = False
-        elif event.button() == Qt.MouseButton.RightButton:
-            print("Right mouse button pressed on item")
-        else:
-            print("Middle mouse button pressed on item")
-
-        # Call the default implementation to propagate the event
-        super().mousePressEvent(event)
-
-
-class Scale:
-    '''
-    The scale class encapsulates all data and methods for a particular scale family with 
-    variable mode and key signature.
-    param name:  The name of the scale family
-    param scaleDef: A two element list containing:
-                                firstModeIntervals in scaledef[0]
-                                list of mode names in scaleDef[1]
-    param scene:  The pyQt6 scene
-
-    Note: firstModeIntervals are the intervals for the first (0 index) mode in semitones between the
-          root tone - > 2nd scale degree,   2nd scale degree -> 3rd,
-          3rd -> 4th, .... last scale degree -> root.  If there are 7 notes in a
-          scale then there will be 7 intervals.  For octave scales the sum of the intervals = 12
-          EX: Diatonic: Ionion mode (Maj): [2, 2, 1, 2, 2, 2, 1]
-    '''
-    allKeys = ["None", "C", "C" + sharp + '/D' + flat, "D", "D" + sharp + "/E" + flat, "E", "F",
-               "F" + sharp + "/G" + flat, "G", "G" + sharp + "/A" + flat, "A", "A" + sharp + "/B" + flat, "B"]
-
-
-    def __init__(self, name, scaleDef, scene):
-        self.name = name
-        logger.info(f"Scale created: {name}")
-        logger.debug(scaleDef)
-        self.modes = scaleDef[1]
-        self.firstModeIntervals = deque(scaleDef[0])
-        self.modeIndx = 0
-        self.scene = scene
-        self._key = None
-        self._noteSemitonePositions = []
-        self._notes = []
-        self.CalculateModeNotePositions()
-        self.CalculateNoteNames()
-        self.graphicItems = []
-        self.noteMidiNum = dict(zip(Scale.allKeys, [0, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71]))
-
-    @property
-    def numOfNotes(self):
-        return len(self.firstModeIntervals)
-
-    @property
-    def mode(self):
-        return self.modes[self.modeIndx]
-
-    @mode.setter
-    def mode(self, amode):
-        try:
-            self.modeIndx = self.modes.index(amode)
-        except:
-            logger.warning('Bad mode recalled')
-        self.CalculateModeNotePositions()
-        self.CalculateNoteNames()
-        self.deleteGraphicItems()
-
-    @property
-    def key(self):
-        return self._key
-
-    @key.setter
-    def key(self, newKey):
-        if newKey == 'None':
-            self._key = None
-        else:
-            self._key = newKey
-        self.CalculateNoteNames()
-        self.deleteGraphicItems()
-
-    @property
-    def notes(self):
-        return self._notes
-
-    @property
-    def noteSemitonePositions(self):
-        return self._noteSemitonePositions
-
-    def CalculateModeNotePositions(self):
-        self._noteSemitonePositions = self.getModeDegRelPositions(self.modeIndx)
-        logger.debug(f" scale index = {self._noteSemitonePositions}")
-
-    def getModeDegRelPositions(self, modeIndx, scaledeg=1):
-        rotIntvls = self.firstModeIntervals.copy()
-        rotIntvls.rotate(-(self.modeIndx + scaledeg -1))
-        rotIntvls.appendleft(0)
-        return Cumulative(list(rotIntvls))
-
-    def CalculateNoteNames(self):
-        """Given the root note the 12 notes are reordered starting with the root note.
-        Note that the first item in Scale.keys is 'none' that is why Scale.keys[1:] is
-        used below as it starts with 'C'  """
-        if self._key == "none" or not self._key:
-            # no note was selected for the root, relative scale members will be shown with roman numerals
-            self._notes = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'][:self.numOfNotes]
-        else:
-            # construct a chromatic list of 12 notes starting with the root
-            offset = Scale.allKeys[1:].index(self._key)
-            self._notes = [Scale.allKeys[1:][(i + offset) % len(Scale.allKeys[1:])] for i, x in
-                          enumerate(Scale.allKeys[1:])]
-            self._notes = [self.notes[i] for i in self._noteSemitonePositions [:-1]]
-
-
-
-
-
-    def drawScale(self, x0, y0, rmax, angOffset, pen, chordLevel, chorder, alignNote=None):
-        '''
-        This method draws the scale centered at x0, y0 with a maximumradius of rmax,
-        an angular offset (root position), QPen to use (color, etc), chordlevel to display (simple, all, etc.),
-        and if the scale should be realigned to some other root position reference note. (None for primary, 
-        primary root note for reference scale)
-        '''
-        # delete current scale graphics
-        self.deleteGraphicItems()
-
-        if alignNote:
-            self.graphicItems.append(
-                drawText(self.scene, [x0, y0 - 10], self.name, 14, position=Pos.CENTER, tcolor=pen.color()))
-            self.graphicItems.append(
-                drawText(self.scene, [x0, y0 + 10], self.mode, 14, position=Pos.CENTER, tcolor=pen.color()))
-            semitoneDelta = Scale.allKeys.index(self._key) - Scale.allKeys.index(alignNote)
-        else:
-            semitoneDelta = 0
-
-        start = (rmax * cos(radians(angOffset + (semitoneDelta * 30))),
-                 rmax * sin(radians(angOffset + (semitoneDelta * 30))))
-        pts = []
-
-        for scaleDeg, i in enumerate(self._noteSemitonePositions ):
-            a = radians(angOffset + (i + semitoneDelta) * 30)
-            r = rmax
-            x = r * cos(a)
-            y = r * sin(a)
-
-            rt = r * 1.12
-            xt = rt * cos(a)
-            yt = rt * sin(a)
-            # print(f"Scale degree = {scaleDeg}, chromatic index = {i}")
-
-            if i < 12:
-                noteName = self.notes[scaleDeg]
-                relchordtonepos = self.getModeDegRelPositions(self.modeIndx, scaleDeg+1)
-                logger.debug(f"INPUT TO CHORDER: {noteName} has {relchordtonepos}")
-                chName, hoverText = chorder.getChordNames(noteName, relchordtonepos, level=chordLevel)
-
-                gitem = drawText(self.scene, [0.85 * (xt + x0), 0.85 * (yt + y0)], chName, size=14, txtWidth=0,
-                                 position=Pos.RADIAL_IN, refPt=[x0, y0], tcolor=pen.color())
-                gitem.setToolTip(hoverText)
-                self.graphicItems.append(gitem)
-
-            pts.append((x, y))
-            self.graphicItems.append(drawCircle(self.scene, x + x0, y + y0, 10, pen))
-            if scaleDeg == 0 and alignNote:
-                self.graphicItems.append(drawCircle(self.scene, x + x0, y + y0, 16, pen))
-
-        for pt in pts:
-            stop = pt
-            self.graphicItems.append(
-                drawLine(self.scene, start[0] + x0, start[1] + y0, stop[0] + x0, stop[1] + y0, pen=pen))
-
-            start = stop
-
-    def deleteGraphicItems(self):
-        logger.debug(f'deleting scale {len(self.graphicItems)} items')
-        for anItem in self.graphicItems:
-            # print(anItem)
-            self.scene.removeItem(anItem)
-            del anItem
-        self.graphicItems = []
-
-    def playNote(self, port, midiNote, duration):
-        # Send MIDI message (e.g., note on)
-        logger.debug(midiNote)
-        msg = mido.Message('note_on', note=midiNote, velocity=127)
-        port.send(msg)
-        time.sleep(duration)
-        # Send MIDI message (e.g., note off)
-        msg = mido.Message('note_off', note=midiNote, velocity=0)
-        port.send(msg)
-
-
-    def playScale(self, midiPortName, progNum, tempo, octaves, scalePatterns):
-        # Initialize MIDI output
-        try:
-            port = mido.open_output(midiPortName)  # Replace with the correct port name
-        except:
-            msgBox = QMessageBox()
-            msgBox.setText("You must select a valid MIDI device's input port from Midi settings")
-            msgBox.setWindowTitle("MIDI Port ERROR")
-            msgBox.setIcon(QMessageBox.Icon.Critical)
-            msgBox.setStandardButtons(QMessageBox.StandardButton.Ok )
-
-            result = msgBox.exec()
-            return
-
-        # Set the program change message
-        program_change = mido.Message('program_change', program=progNum, channel=0,
-                                      time=10)  # Change to instrument 12 on channel 0
-        port.send(program_change)
-
-        noteDuration = 60 / tempo
-        octaveOffsets = [0, 12, 24]
-
-        # make assending semitone offsets from key
-        keyNum = self.noteMidiNum[self.key]
-        noteNumberSequence = [keyNum + st + octOff for octOff in octaveOffsets for st in self.sindx[:-1] ]
-        noteNumberSequence.append(keyNum + 12 + octaveOffsets[-1])
-        #print(noteNumberSequence)
-        #print(scalePatterns)
-
-        numOfNotesToPlay = ((len(self.sindx) - 1)* octaves ) + 1
-
-        reversedNoteNumberSequence = list(reversed(noteNumberSequence))
-        logger.debug(reversedNoteNumberSequence)
-        revIndxToStartFrom = len(reversedNoteNumberSequence ) - numOfNotesToPlay
-
-        if MidiPattern.LINEAR_UP in scalePatterns:
-            for anote in noteNumberSequence[:numOfNotesToPlay]:
-                self.playNote(port, anote, noteDuration)
-
-        if MidiPattern.LINEAR_DOWN in scalePatterns:
-            for anote in reversedNoteNumberSequence[revIndxToStartFrom:]:
-                self.playNote(port, anote, noteDuration)
-
-        if MidiPattern.PATTERN_UP in scalePatterns:
-            for indx, anote in enumerate(noteNumberSequence[:numOfNotesToPlay]):
-                self.playNote(port, anote, noteDuration)
-                if indx < numOfNotesToPlay - 1:
-                    self.playNote(port, noteNumberSequence[indx+1], noteDuration)
-                    self.playNote(port, noteNumberSequence[indx+2], noteDuration)
-
-        if MidiPattern.PATTERN_DOWN in scalePatterns:
-            for indx,anote in enumerate(reversedNoteNumberSequence[revIndxToStartFrom:]):
-                self.playNote(port, reversedNoteNumberSequence[revIndxToStartFrom+indx - 2], noteDuration)
-                self.playNote(port, reversedNoteNumberSequence[revIndxToStartFrom+indx - 1], noteDuration)
-                self.playNote(port, anote, noteDuration)
-
-        if MidiPattern.ARPEGGIO_UP in scalePatterns:
-            for indx, anote in enumerate(noteNumberSequence[:numOfNotesToPlay]):
-                self.playNote(port, anote, noteDuration)
-                self.playNote(port, noteNumberSequence[indx + 2], noteDuration)
-                self.playNote(port, noteNumberSequence[indx + 4], noteDuration)
-
-        if MidiPattern.ARPEGGIO_DOWN in scalePatterns:
-            for indx, anote in enumerate(reversedNoteNumberSequence[revIndxToStartFrom:]):
-                self.playNote(port, reversedNoteNumberSequence[revIndxToStartFrom + indx - 4], noteDuration)
-                self.playNote(port, reversedNoteNumberSequence[revIndxToStartFrom + indx - 2], noteDuration)
-                self.playNote(port, anote, noteDuration)
-
-        # Close MIDI output
-        port.close()
-
-class Chorder():
-    def __init__(self, chordSymbology):
-        self.chordsymbology = chordSymbology
-        if self.chordsymbology == ChordSymbol.RAW:
-            self.rep = {'q':'q'}
-        elif self.chordsymbology == ChordSymbol.COMMON:
-            self.rep = {'sev':'<sup>7</sup>'}
-        elif self.chordsymbology == ChordSymbol.JAZZ:
-            self.rep = {'dim':'<sup>o</sup>',
-                         'aug':'<sup>+</sup>',
-                         'sev':'<sup>7</sup>',
-                         'maj':'<span class="music-symbol" style="font-family: Arial Unicode MS, Lucida Sans Unicode;">Δ</span>',
-                          'min':'-'}
-        else:
-            Exception("Chorder error due to chordsymbology unknow")
-
-
-    def chordformater(self, raw):
-        ''' reformats chord to a specific symbology'''
-        rep = dict((re.escape(k), v) for k, v in self.rep.items())
-        pattern = re.compile("|".join(rep.keys()))
-        text = pattern.sub(lambda m: rep[re.escape(m.group(0))], raw)
-        return text
-
-    def getChordNames(self, noteName, relchordTonePos, level=ChordLevel.OFF):
-        '''
-        this method takes a scale, the scale degree and the note at that scale degree and returns a string
-        of chords at Note that fit in the scale.  This provides an aid in music composition as to what chords
-        can be used within a particular scale.   There are multiple levels:
-        Simple:min, maj, 7th, dim and aug
-        all: min[6 7 M7], maj[6 7], 7th[b5], aug, dim, sus2 ...
-
-        13th chords define the basic chord types.  If the 13th is missing, then the 9th, 7th, and triad are checked.
-        All thes chords are named by the highest note. Ex Cmaj13, Cmaj9, Cmaj7, Cmaj, C13, C9, C7, Cmin13, Cmin9, Cmin
-
-        maj13 =
-        min13
-        dom13 =
-
-
-        '''
-
-        basicChordTypes = {(4, 7, 10): {'7<sup>th</sup>': ['?']}, (4, 7): {'maj': ['?']}, (3, 7): {'min': ['?']},
-                           (3, 6): {'dim': ['?']}}
-
-        advChordTypes = {(4, 8): {'aug': ['?']}, (2, 7): {'sus2': ['?']}}  # C+(9), C6, C6/E
-
-        allChordtypes = {(5, 7): {'sus4': ['?']}, (2, 5, 7): {'sus24': ['?']}}
-
-        accidentals = {(2, 5, 9): {'13<sup>th</sup>': ['?']}, (2, 5): {'11<sup>th</sup>': ['?']},
-                       (2): {'9<sup>th</sup>': ['?']}}
-
-        nydanaIntervals = {(0, 4, 7): {'maj': ['maj']},
-                           (0, 3, 7): {'min': ['min']},
-                           (0, 4, 7, 10): {'7<sup>th</sup>': ['7th']},
-                           (4, 8): {'aug': ['R-4, 7th']},
-                           (0, 3, 6): {'dim': ['R, dim', 'R, dim-3', 'R_, dim+1'],
-                                       'm(-5)': ['R, dim-3', 'R_, dim+1']},
-                           (0, 2, 7, 10): {'7sus2': ['R, min+1'], '9(≠3)': ['R, min+1']},
-                           (0, 3, 6, 9): {'dim7': ['R, dim-3, dim', 'R_, dim-2, (dim+1)', 'R_, dim-2, (dim-5)']},
-                           (0, 2, 4, 8): {'(+5, 9)': ['R_, sev-4']},
-                           (0, 4, 7, 9): {'6': ['R, min+3, (maj)'], '6/R+4': ['R+4, min-1, (maj-4)'],
-                                          '6/R+7': ['R+7, min+2, (maj-1)'],
-                                          '6/R+9': ['R+9, maj-3, (min)', 'R_+9, maj+1']},
-                           (0, 1, 4, 7, 9): {'6(m9)': ['R, maj+3, (maj)']},
-                           (0, 4, 6, 9): {'6(-5)': ['R_, dim-5, min-5']},
-                           (0, 4, 7, 10): {'7': ['R, sev, (maj)', 'R, dim+1, (maj)'], '7/R+10': ['R+10, maj+2']},
-                           (0, 1, 4, 7, 10): {'7(m9)': ['R, maj, dim-2', 'R, sev, dim-2'],
-                                              '7(m9)/R+10': ['R+10, dim, maj+2']},
-                           (0, 1, 7, 10): {'7(≠3, m9)': ['R, dim-2']},
-                           (0, 3, 4, 7, 10): {'7(m10)': ['R, min, sev', 'R, min, dim+1', 'R, maj-3, sev'],
-                                              '7(m10)/R+7': ['R+7, min-1, dim', 'R+7, min-1, sev-1']},
-                           (0, 4, 9, 10): {'7(13)': ['R, sev, min+3']},
-                           (0, 4, 6, 10): {'7(-5)': ['R, sev-6', 'R_, sev-2']},
-                           (0, 3, 4, 6, 10): {'7(-5, m10)': ['R, dim-3, sev']},
-                           (0, 4, 6, 8, 10): {'7(+5, +11)': ['R, sev-4, sev']},
-
-                           (0, 1, 5, 7, 10): {'7sus4(m9)': ['R, min-2, dim-2'], '11(m9)': ['R, min-2, (dim-2)']},
-                           (0, 2, 4, 7, 10): {'9': ['R, maj, min+1', 'R, sev, min+1', 'R, min+1, dim+1'],
-                                              '9/R+2': ['R+2, maj-2, dim-1'], '9/R+7': ['R+7, min, sev-1']},
-                           (0, 2, 4, 6, 10): {'9(-5)': ['R, sev, sev+2']},
-                           (0, 2, 4, 8, 10): {'9(+5)': ['R, sev-2, sev', 'R_, sev-4, sev+2']},
-                           (0, 2, 8, 10): {'9(≠3, +5)': ['R, sev-2']},
-                           (0, 2, 5, 7, 10): {'9sus4': ['R, maj-2, min+1'], '11': ['R, maj-2, (min+1)']},
-                           (0, 2, 5, 8, 10): {'11(+5)': ['R, maj-2, dim-1', 'R, maj-2, min-1']},
-                           (0, 2, 6, 7, 10): {'11(+11)': ['R, min+1, sev+2']},
-                           (0, 2, 4, 7, 9, 10): {'13': ['R, min+1, min+3'], '13/R+4': ['R+4, min-3, min-1']},
-                           (0, 2, 4, 5, 9, 10): {'13': ['R, sev, min+2']},
-                           (0, 4, 5, 9, 10): {'13': ['R, maj-1, sev']},
-                           (0, 2, 5, 7, 9, 10): {'13(≠3)': ['R, maj-1, min+1', 'R, min+1, min+2']},
-                           (0, 2, 5, 9, 10): {'13(≠3)': ['R, maj-1, maj-2']},
-                           (0, 1, 4, 9, 10): {'13(m9)': ['R, sev, maj+3']},
-                           (0, 2, 4, 6, 9, 10): {'13(+11)': ['R, sev, maj+2']},
-                           (0, 2, 4, 6, 7, 9, 10): {'13(+11)': ['R, dim+1, maj+2']},
-                           (0, 4, 6, 9, 10): {'13(+11)': ['R, sev, dim+3']},
-                           (0, 4, 7, 11): {'maj7': ['R, min+4, (maj)', 'R_, min-4']},
-                           (0, 4, 8, 11): {'maj7(+5)': ['R, maj+4']},
-                           (0, 2, 4, 7, 11): {'maj9': ['R, maj, maj+1', 'R, maj+1, min+4'],
-                                              'maj9/R+2': ['R+2, maj-1, maj-2']},
-                           (0, 2, 7, 11): {'maj9(≠3)': ['R, maj+1']},
-                           (0, 2, 4, 8, 11): {'maj9(+5)': ['R_, maj-4, sev-4', 'R_, sev-4, dim-3']},
-                           (0, 2, 5, 11): {'maj11': ['R, dim+2']},
-                           (0, 2, 5, 7, 11): {'maj11': ['R, maj+1, sev+1']},
-                           (0, 2, 5, 8, 11): {
-                               'maj11(+5)': ['R_, dim, (dim-3)', 'R, min-1, dim+2', 'R, dim-1, dim+2']},
-                           (0, 2, 4, 7, 9, 11): {'maj13': ['R, maj+1, min+3']},
-                           (0, 4, 7, 9, 11): {'maj13': ['R_, min-4, min-5']},
-                           (0, 2, 5, 7, 9, 11): {'maj13(≠3)': ['R, maj-1, maj+1']},
-                           (0, 2, 4, 6, 7, 9, 11): {'maj13(+11)': ['R, maj+2, min+4']},
-                           (0, 2, 4, 6, 9, 11): {'maj13(+11)': ['R_, min-5, min-3']},
-                           (0, 1, 3, 7): {'m(m9)': ['R, sev-3, (min)', 'R_, sev+1']},
-                           (0, 3, 6, 8): {'m(-5, m6)': ['R_, maj, sev']},
-                           (0, 2, 3, 6): {'m(-5, 9)': ['R, dim-3, sev+2']},
-                           (0, 3, 8): {'m(+5)': ['R, maj-4', 'R_, maj']},
-                           (0, 3, 7, 9): {'m6': ['R, dim, (min)'], 'm6/R+3': ['R_+3, dim-5, (min-5)'],
-                                          'm6/R+7': ['R+7, dim-1, (min-1)'],
-                                          'm6/R+9': ['R+9, min-3, (dim-3)', 'R_+9, min+1, (dim+1)']},
-                           (0, 1, 3, 7, 9): {'m6(m9)': ['R, min, sev+3']},
-                           (0, 3, 7, 10): {'m7': ['R, maj-3, (min)', 'R_, maj+1'],
-                                           'm7/R+10': ['R+10, min+2, (maj-1)']},
-                           (0, 1, 3, 7, 10): {'m7(m9)': ['R, maj-3, sev-3', 'R, sev-3, dim-2', 'R, maj-3, dim-2']},
-                           (0, 3, 6, 10): {'m7(-5)': ['R, min-3', 'R_, min+1'], 'm7(-5)/R+3': ['R+3, min, dim'],
-                                           'm7(-5)/R+6': ['R_+6, min-5, dim-5'],
-                                           'm7(-5)/R+10': ['R+10, dim-1, (min-1)']},
-                           (0, 3, 6, 8, 10): {'m7(-5, m6)': ['R_, maj, min+1']},
-                           (0, 2, 3, 7, 10): {'m9': ['R, min, min+1', 'R, maj-3, min+1'],
-                                              'm9/R+2': ['R+2, min-2, min-1', 'R+2, maj-5, min-2']},
-                           (0, 2, 3, 5, 7, 10): {'m9/R+5': ['R+5, min+1, min+2'],
-                                                 'm11': ['R, maj-2, min', 'R, maj-3, maj-2']},
-                           (0, 2, 3, 6, 10): {'m9(-5)': ['R, min-3, sev+2']},
-                           (0, 2, 3, 7, 9, 10): {'m13': ['R, min+1, dim']},
-                           (0, 3, 7, 9, 10): {'m13': ['R, maj-3, dim', 'R_, maj+1, dim+4']},
-                           (0, 2, 3, 6, 9, 10): {'m13(+11)': ['R, min-3, maj+2']},
-                           (0, 3, 6, 9, 10): {'m13(+11)': ['R_, min+1, dim-2']},
-                           (0, 2, 3, 5, 8, 10): {'m13(m13)': ['R, maj-4, maj-2']},
-                           (0, 3, 6, 11): {'mMaj7(-5)': ['R_, maj-3, (dim+1)']},
-                           (0, 3, 8, 11): {'mMaj7(+5)': ['R_, min, (maj)']},
-                           (0, 2, 3, 7, 11): {'mMaj9': ['R, min, maj+1']},
-                           (0, 2, 3, 8, 11): {'mMaj9(+5)': ['R_, dim-3, min']},
-                           (0, 3, 5, 7, 11): {'mMaj11': ['R, min, sev+1']},
-                           (0, 2, 3, 5, 7, 11): {'mMaj11': ['R, min, dim+2']},
-                           (0, 2, 3, 6, 11): {'mMaj11(+11)': ['R_, maj-3, min-3', 'R_, maj-3, sev-6']},
-                           (0, 3, 5, 7, 9, 11): {'mMaj13': ['R, dim, sev+1']},
-                           (0, 2, 3, 7, 9, 11): {'mMaj13': ['R, maj+1, dim']},
-                           (0, 2, 3, 5, 9, 11): {'mMaj13': ['R, dim, dim+2']},
-                           (0, 3, 6, 9, 11): {
-                               'mMaj13(+11)': ['R_, maj-3, sev-3', 'R_, maj-3, dim-5', 'R_, dim-5, sev-3']},
-                           (0, 3, 5, 8, 11): {'mMaj13(m13)': ['R_, maj, dim', 'R_, min, dim', 'R, min-4, min-1']}}
-
-        chordTypes = nydanaIntervals
-        chordNames = []
-        hovertext = []
-        #print(notes)
-
-        logger.debug(f'ChordLevel: {level}')
-
-        if level == ChordLevel.BASIC_ACCORD:
-            ctstop = 4
-        elif level == ChordLevel.ADV_ACCORD:
-            ctstop = 20
-        elif level == ChordLevel.ALL:
-            ctstop = len(chordTypes.keys())
-
-        if level == ChordLevel.OFF:
-            chordNames.append(f'<p>{noteName} </p>')
-            hovertext.append("Change displayed chords \nthru edit->preference")
-        else:
-            cName = ''
-            htxt = ''
-            for ctindx, achdtypints in enumerate(chordTypes):
-                if ctindx > ctstop:
-                    if len(cName) != 0:
-                        continue
-                if all(elem in relchordTonePos for elem in achdtypints):
-                    for chdName in chordTypes[achdtypints]:
-                        fullChdNam = self.chordformater(chdName)
-                        hoverTxt = chordTypes[achdtypints][chdName][0]
-
-                        break
-
-                    if len(cName) == 0:
-                        cName =  fullChdNam
-                        htxt =  hoverTxt
-                    else:
-                        cName = cName + ', ' + fullChdNam
-                        htxt = htxt + ', \n' + hoverTxt
-            # print(self.notes)
-            if len(cName) == 0:
-                cName = f'<p>{noteName}: {relchordTonePos} </p>'
-            else:
-                cName = f'<p>{noteName}: ' + cName + '</p>'
-
-
-
-        return (cName, htxt)
-
-class AboutDialog(QDialog):
+class AboutDlg(QDialog):
     def __init__(self, parent):
         super().__init__()
         self.setWindowTitle("Scale Smithy")
@@ -1391,7 +675,7 @@ class AboutDialog(QDialog):
         self.layout.addWidget(self.button)
         self.setLayout(self.layout)
 
-class DocsDialog(QDialog):
+class DocsDig(QDialog):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Documentation")
@@ -1438,7 +722,7 @@ class DocsDialog(QDialog):
     # def addDocs(self):
     #     self.tb.append("Ths is a <b>test</b>")
 
-class FaqDialog(QDialog):
+class FaqDlg(QDialog):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("FAQ")
@@ -1464,7 +748,7 @@ class FaqDialog(QDialog):
         self.layout.addWidget(self.button)
         self.setLayout(self.layout)
 
-class ContactDialog(QDialog):
+class ContactDlg(QDialog):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Contact Info")
@@ -1478,22 +762,19 @@ class ContactDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, args):
         super().__init__()
-        logger.info('\nScale Smithy Started.  The configuration file being used is:')
+
+        #logging.basicConfig(level=args.loglevel[0])
+
+        logger.info('Scale Smithy Started.  The configuration file being used is:')
         self.settings = QSettings("santabayanian", "ScaleSmithy")
         logger.info(self.settings.fileName())
-        # fdb = QFontDatabase()
-        # print(fdb.families())
         priScaleName, priScaleMode, priScaleKey, refScaleName, refScaleMode, refScaleKey = self.readSettings()
         self.setStyleSheet("QMainWindow { border: 1px solid black; }")
-        # print(self.chordNameLevel)
         self.angOffset = float(self.rootPos.value)
 
-        self.chorder = Chorder(self.chordSymbology)
-
         self.chromeCircleGraphics = []
-
         self.scalegraphics = []
         self.refScalegraphics = []
         self.scaleEditMode = False
@@ -1509,6 +790,8 @@ class MainWindow(QMainWindow):
         self.scene = QGraphicsScene(-400, -500, 800, 1000)
         self.view = QGraphicsView(self.scene)
 
+        self.chorder = Chorder(self.scene, self.chordSymbology, self.chordNameLevel)
+
         if len(self.scales) == 0:
             self.scales = self.defaultScales()
 
@@ -1522,6 +805,8 @@ class MainWindow(QMainWindow):
             self.refScale = Scale(refScaleName, self.scales[refScaleName], self.scene)
             self.refScale.mode = refScaleMode
             self.refScale.key = refScaleKey
+
+
 
         # setup menu
         menu = self.menuBar()
@@ -1626,9 +911,13 @@ class MainWindow(QMainWindow):
         #Qtimer for random run
         self.timer = QTimer(self, timeout=self.update_ran)
 
+        self.stradella =  StradellaBass(self.scene, self.pen)
+
         # draw chromatic circle and stradella layout 
         self.drawChromCircle()
-        self.draw_Stradella(0, 420)
+        self.stradella.draw_Stradella(0, 420,
+                                      self.primaryScale.noteSemitonePositions,
+                                      self.showStradella)
 
         # Add the view to the window and draw the scale.  Also draw reference scale if it exists
         self.setCentralWidget(self.view)
@@ -1665,6 +954,7 @@ class MainWindow(QMainWindow):
         self.settings.beginGroup("MainWindow")
         self.settings.setValue("size", self.size())
         self.settings.setValue("pos", self.pos())
+        self.settings.setValue("showStradella", self.showStradella)
         self.settings.endGroup()
         self.settings.beginGroup("chromCir")
         self.settings.setValue("rootpos", self.rootPos)
@@ -1708,6 +998,7 @@ class MainWindow(QMainWindow):
         self.settings.beginGroup("MainWindow")
         self.resize(self.settings.value("size", QSize(800, 1000)))
         self.move(self.settings.value("pos", QPoint(200, 200)))
+        self.showStradella = ("true" == self.settings.value("showStradella", True))
         self.settings.endGroup()
         self.settings.beginGroup("chromCir")
         try:
@@ -1764,7 +1055,7 @@ class MainWindow(QMainWindow):
         else:
             fileName = fileNameInfo[0]
 
-        dlg = ScaleSelect(self, "Select which scales to save to file", self.scales)
+        dlg = ScaleSelectDlg(self, "Select which scales to save to file", self.scales)
         if dlg.exec():
             with open(fileName, "w") as fp:
                 json.dump(dlg.getSelectedScales(), fp)
@@ -1774,9 +1065,9 @@ class MainWindow(QMainWindow):
         if len(fileNameInfo[0]) > 0:
             with open(fileNameInfo[0], "r") as fp:
                 ldscales = json.load(fp)
-            dlg = ScaleSelect(self, ("Select which scales to load from file.\n" +
+            dlg = ScaleSelectDlg(self, ("Select which scales to load from file.\n" +
                                      "Red indicates a conflict that will \n" +
-                                     "overwrite an existing scale"),ldscales, self.scales)
+                                     "overwrite an existing scale"), ldscales, self.scales)
             if dlg.exec():
                 chosenscales = dlg.getSelectedScales()
                 logger.debug(chosenscales )
@@ -1788,13 +1079,13 @@ class MainWindow(QMainWindow):
                 logger.debug("Canceled")
 
     def findScale(self):
-        dlg = FindScale(self.scales)
+        dlg = FindScaleDlg(self.scales)
         if dlg.exec():
             logger.debug("set to this scale")
             self.primaryScale.deleteGraphicItems()
             if dlg.found:
                 scaleName = dlg.scalefamily
-                self.primaryScale = Scale( dlg.scalefamily, self.scales[ dlg.scalefamily], self.scene)
+                self.primaryScale = Scale(dlg.scalefamily, self.scales[ dlg.scalefamily], self.scene)
                 self.buildModeMenu()
             else:
                 logger.debug(dlg.ukintervals)
@@ -1809,7 +1100,7 @@ class MainWindow(QMainWindow):
 
     def scaleEdit(self):
 
-        dlg = ScaleEditor(self.scaleEditMode, self)
+        dlg = ScaleEditorDlg(self.scaleEditMode, self)
         if dlg.exec():
             logger.debug("Scale Edit Success!")
             sindx = []
@@ -1911,14 +1202,16 @@ class MainWindow(QMainWindow):
             print(result)
 
     def prefEdit(self):
-        dlg = PrefEditor(self, self.chordNameLevel, self.chordSymbology, self.rootPos)
+        dlg = PrefEditorDlg(self, self.chordNameLevel, self.chordSymbology, self.rootPos)
         if dlg.exec():
-            print("Success!")
             self.chordNameLevel = dlg.chordLevel
             self.chordSymbology = dlg.chordSymbol
-            self.chorder = Chorder(self.chordSymbology)
+            self.chorder.symbology = self.chordSymbology
             self.rootPos = dlg.rootPos
             self.angOffset = float(self.rootPos.value)
+            self.showStradella = dlg.showBassChkBox.isChecked()
+            self.stradella.draw_Stradella(0, 420, self.showStradella)
+            self.drawTitle()
             self.drawChromCircle()
             self.drawScale()
 
@@ -1926,7 +1219,7 @@ class MainWindow(QMainWindow):
             print("Cancel!")
 
     def midiSettings(self):
-        dlg = MidiSettings(self)
+        dlg = MidiSettingsDlg(self)
         if dlg.exec():
             print('success')
 
@@ -2016,19 +1309,19 @@ class MainWindow(QMainWindow):
         self.drawScale()
 
     def about(self):
-        about_dialog = AboutDialog(self)
+        about_dialog = AboutDlg(self)
         about_dialog.exec()
 
     def documentation(self):
-        docs_dialog = DocsDialog()
+        docs_dialog = DocsDig()
         docs_dialog.exec()
 
     def faq(self):
-        faq_dialog = FaqDialog()
+        faq_dialog = FaqDlg()
         faq_dialog.exec()
 
     def contact(self):
-        cont_dialog = ContactDialog()
+        cont_dialog = ContactDlg()
         cont_dialog.exec()
 
 
@@ -2044,6 +1337,8 @@ class MainWindow(QMainWindow):
                                    position=Pos.RIGHT_CENTER)
         else:
             self.modeGI.setPlainText(f"Mode: {self.primaryScale.mode}")
+
+        self.chorder.drawChordKey(300, -440)
 
     def drawChromCircle(self, cx=0, cy=0, dia=600, pen=None):
         "this method draws the chromatic circle with intervals identified"
@@ -2073,7 +1368,7 @@ class MainWindow(QMainWindow):
                     drawCircle(self.scene, x, y, ndia, self.pen.black, self.brush.white, noteId=indx,
                                acceptMousebuttons=self.scaleEditMode))
             self.chromeCircleGraphics.append(drawText(self.scene, [tx, ty], intervals[indx],
-                                                      size=12, position=Pos.RADIAL_OUT, refPt=[cx,cy]))
+                                                      size=12, position=Pos.RADIAL_OUT, refPt=[cx, cy]))
 
     def getSelectedNotes(self):
         selnotes = []
@@ -2089,23 +1384,7 @@ class MainWindow(QMainWindow):
                 if anItem.isSelected:
                     anItem.setSelectedState(False)
 
-    def draw_Stradella(self, x0, y0):
-        # Draws the bass and couter-bass rows relative to each other
-        buttonR = 23
-        spacing = 2.25 * buttonR
-        numOfRows = 14
-        xOffset = (numOfRows * spacing) / 2
-        rOffset = buttonR / 2
-        yOffset = spacing / 2
-        keyints = [['P4', 'R', 'P5', 'M2', 'M6', 'M3', 'M7', 'T', 'm2', 'm6', 'm3', 'm7', 'P4', 'R'],
-                   ['m2', 'm6', 'm3', 'm7', 'P4', 'R', 'P5', 'M2', 'M6', 'M3', 'M7', 'T', 'm2', 'm6']]
-        for xindx in range(numOfRows):
-            for yindx in range(2):
-                x = x0 + (xindx * spacing) - xOffset + (yindx * rOffset)
-                y = y0 + (yindx * spacing) - yOffset
-                drawCircle(self.scene, x, y, 2 * buttonR, self.pen.black)
-                text = keyints[yindx][xindx]
-                drawText(self.scene, [x, y], text, size=16)
+
 
     def drawScale(self):
 
@@ -2115,6 +1394,9 @@ class MainWindow(QMainWindow):
         angOffset = self.angOffset
         pen = self.pen.black
         self.primaryScale.drawScale(x0, y0, rmax, angOffset, pen, self.chordNameLevel, self.chorder)
+        self.stradella.draw_Stradella(0, 420,
+                                      self.primaryScale.noteSemitonePositions,
+                                      self.showStradella)
 
         if self.refScale:
             self.drawRefScale()
@@ -2201,13 +1483,15 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == '__main__':
+
     # You need one (and only one) QApplication instance per application.
     # Pass in sys.argv to allow command line arguments for your app.
     # If you know you won't use command line arguments QApplication([]) works too.
     app = QApplication([])
 
     # Create a Qt widget, which will be our window.
-    window = MainWindow()
+
+    window = MainWindow(args)
     window.show()  # IMPORTANT!!!!! Windows are hidden by default.
 
     # Start the event loop.
