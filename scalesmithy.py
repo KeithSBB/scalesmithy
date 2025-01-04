@@ -347,7 +347,6 @@ class MidiSettingsDlg(QDialog):
         self.parent().midiTempo = int(self.tempoBox.text())
 
     def newPattern(self):
-        print('new pattern!!!!!')
         pattern = MidiPattern.NONE
         if self.linUpChkbox.isChecked():
             pattern |= MidiPattern.LINEAR_UP
@@ -595,7 +594,6 @@ class FindScaleDlg(QDialog):
         for self.scalefamily in self.knownScales:
             intervals = deque(self.knownScales[self.scalefamily][0])
             if len(intervals) != len(self.ukintervals):
-                #print(f"{scalefamily} has a different number of notes")
                 continue
 
             modes = self.knownScales[self.scalefamily][1]
@@ -1163,14 +1161,13 @@ class MainWindow(QMainWindow):
 
         result = msgBox.exec()
         if result == QMessageBox.StandardButton.Ok:
-            print("OK button clicked")
             self.primaryScale.deleteGraphicItems()
             del self.scales[self.primaryScale.name]
             self.scale_Menu.clear()
             self.buildScaleMenu()
 
         elif result == QMessageBox.StandardButton.Cancel:
-            print("Cancel button clicked")
+            pass
 
     def scaleRestore(self):
         msgBox = QMessageBox()
@@ -1185,21 +1182,19 @@ class MainWindow(QMainWindow):
         msgBox.addButton("Cancel", QMessageBox.ButtonRole.NoRole)
         result = msgBox.exec()
         if result == 0:
-            print("reset")
             self.scales = self.defaultScales()
             self.scale_Menu.clear()
             self.buildScaleMenu()
         elif result == 1:
-            print("restore defaults")
             defScale = self.defaultScales()
             for ascale in defScale:
                 self.scales[ascale] = defScale[ascale]
             self.scale_Menu.clear()
             self.buildScaleMenu()
         elif result == 2:
-            print("cancel")
+            pass
         else:
-            print(result)
+            logger.warning(f"Scale Restore Error: {result}")
 
     def prefEdit(self):
         dlg = PrefEditorDlg(self, self.chordNameLevel, self.chordSymbology, self.rootPos)
@@ -1215,13 +1210,13 @@ class MainWindow(QMainWindow):
             self.drawChromCircle()
             self.drawScale()
 
-        else:
-            print("Cancel!")
+
+
 
     def midiSettings(self):
         dlg = MidiSettingsDlg(self)
         if dlg.exec():
-            print('success')
+
 
     def clearRef(self):
         if self.refScale:
@@ -1230,7 +1225,6 @@ class MainWindow(QMainWindow):
 
     def setRef(self):
         self.clearRef()
-        print("setRef called")
         refScaleName = copy.deepcopy(self.primaryScale.name)
         refScaleMode = copy.deepcopy(self.primaryScale.mode)
         refScaleKey = copy.deepcopy(self.primaryScale.key)
@@ -1295,17 +1289,16 @@ class MainWindow(QMainWindow):
         self.primaryScale = Scale(self.sender().text(), self.scales[self.sender().text()], self.scene)
         self.primaryScale.key = key
         self.buildModeMenu()
-        self.drawScale()  # print(self.currentScale)
+        self.drawScale()
 
     def setMode(self):
         self.currentMode = self.sender().text()
         self.primaryScale.mode = self.sender().text()
         self.drawTitle()
-        self.drawScale()  # print(self.currentMode)
+        self.drawScale()
 
     def setKey(self):
         self.primaryScale.key = self.sender().defaultWidget().text()
-        # print(self.currentKey)
         self.drawScale()
 
     def about(self):
@@ -1417,8 +1410,6 @@ class MainWindow(QMainWindow):
         self.refScale.drawScale(x0, y0, rmax, angOffset, pen, self.chordNameLevel, self.chorder, alignNote=self.primaryScale.key)
 
     def print(self):
-        print("create imgae called")
-
         printer = QPrinter()
         dialog = QPrintDialog(printer, self)
         if dialog.exec() == QPrintDialog.DialogCode.Accepted:
