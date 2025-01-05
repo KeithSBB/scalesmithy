@@ -173,12 +173,15 @@ class Scale:
                 noteName = self.notes[scaleDeg]
                 relchordtonepos = self.getModeDegRelPositions(self.modeIndx, scaleDeg+1)
                 logger.debug(f"INPUT TO CHORDER: {noteName} has {relchordtonepos}")
-                chName, hoverText = chorder.getChordNames(noteName, relchordtonepos)
+                chNames, hoverTexts = chorder.getChordNames(noteName, relchordtonepos)
+                #Fix this
+                for cindx, chName in enumerate(chNames):
+                    gitem = drawText(self.scene, [0.85 * (xt + x0), 0.85 * (yt + y0 )], chName, size=14, txtWidth=0,
+                                     position=Pos.RADIAL_IN, refPt=[x0, y0], tcolor=pen.color())
+                    if len(hoverTexts[cindx]) > 0:
+                        gitem.setToolTip(hoverTexts[cindx])
 
-                gitem = drawText(self.scene, [0.85 * (xt + x0), 0.85 * (yt + y0)], chName, size=14, txtWidth=0,
-                                 position=Pos.RADIAL_IN, refPt=[x0, y0], tcolor=pen.color())
-                gitem.setToolTip(hoverText)
-                self.graphicItems.append(gitem)
+                    self.graphicItems.append(gitem)
 
             pts.append((x, y))
             self.graphicItems.append(drawCircle(self.scene, x + x0, y + y0, 10, pen))
@@ -219,6 +222,16 @@ class Scale:
             msgBox = QMessageBox()
             msgBox.setText("You must select a valid MIDI device's input port from Midi settings")
             msgBox.setWindowTitle("MIDI Port ERROR")
+            msgBox.setIcon(QMessageBox.Icon.Critical)
+            msgBox.setStandardButtons(QMessageBox.StandardButton.Ok )
+
+            result = msgBox.exec()
+            return
+
+        if not self._key:
+            msgBox = QMessageBox()
+            msgBox.setText("You must select a key note for the scale root first")
+            msgBox.setWindowTitle("MIDI Play ERROR")
             msgBox.setIcon(QMessageBox.Icon.Critical)
             msgBox.setStandardButtons(QMessageBox.StandardButton.Ok )
 
@@ -453,9 +466,8 @@ class Chorder():
                            (0, 3, 5, 8, 11): {'mMaj13(m13)': ['R_, maj, dim', 'R_, min, dim', 'R, min-4, min-1']}}
 
         chordTypes = nydanaIntervals
-        chordNames = []
-        hovertext = []
-        #print(notes)
+        chordNames = [f'<p>{noteName} </p>']
+        hoverText = ['']
 
         logger.debug(f'ChordLevel: {self.level}')
 
@@ -466,29 +478,26 @@ class Chorder():
         elif self.level == ChordLevel.ALL:
             ctstop = len(chordTypes.keys())
 
-        if self.level == ChordLevel.OFF:
-            chordNames.append(f'<p>{noteName} </p>')
-            hovertext.append("Change displayed chords \nthru edit->preference")
-        else:
+        if self.level != ChordLevel.OFF:
             cName = ''
             htxt = ''
             for ctindx, achdtypints in enumerate(chordTypes):
                 if ctindx > ctstop:
                     if len(cName) != 0:
                         continue
+                    else:
+                        break
                 if all(elem in relchordTonePos for elem in achdtypints):
                     for chdName in chordTypes[achdtypints]:
                         fullChdNam = self.chordformater(chdName)
-                        hoverTxt = chordTypes[achdtypints][chdName][0]
-
-                        break
+                        htxt = chordTypes[achdtypints][chdName][0]
 
                     if len(cName) == 0:
-                        cName =  fullChdNam
-                        htxt =  hoverTxt
+                        chordNames.append(fullChdNam)
+                        hoverText.append(htxt )
                     else:
-                        cName = cName + ', ' + fullChdNam
-                        htxt = htxt + ', \n' + hoverTxt
+                        chordNames.append(', ' + fullChdNam)
+                        hoverText.append(', \n' + htxt)
 
             if len(cName) == 0:
                 cName = f'<p>{noteName}: {relchordTonePos} </p>'
@@ -497,7 +506,7 @@ class Chorder():
 
 
 
-        return (cName, htxt)
+        return (chordNames, hoverText )
 
     def drawChordKey(self, x, y):
         self.deleteGraphicItems()

@@ -996,7 +996,7 @@ class MainWindow(QMainWindow):
         self.settings.beginGroup("MainWindow")
         self.resize(self.settings.value("size", QSize(800, 1000)))
         self.move(self.settings.value("pos", QPoint(200, 200)))
-        self.showStradella = ("true" == self.settings.value("showStradella", True))
+        self.showStradella = ("true" == self.settings.value("showStradella", 'true'))
         self.settings.endGroup()
         self.settings.beginGroup("chromCir")
         try:

@@ -3,6 +3,7 @@ from setuptools import setup, find_packages
 setup(
         name='scalesmithy',
         version='0.1.0',
+        py_modules=['musicalclasses', 'utils'],
        # packages=[''],  #         packages=find_packages('.'),
         url='https://github.com/KeithSBB/Scale_Smithy',
         license='TBD',
