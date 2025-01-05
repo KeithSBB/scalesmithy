@@ -1205,7 +1205,7 @@ class MainWindow(QMainWindow):
             self.rootPos = dlg.rootPos
             self.angOffset = float(self.rootPos.value)
             self.showStradella = dlg.showBassChkBox.isChecked()
-            self.stradella.draw_Stradella(0, 420, self.showStradella)
+            self.stradella.draw_Stradella(0, 420, self.primaryScale.noteSemitonePositions, self.showStradella)
             self.drawTitle()
             self.drawChromCircle()
             self.drawScale()
@@ -1216,6 +1216,7 @@ class MainWindow(QMainWindow):
     def midiSettings(self):
         dlg = MidiSettingsDlg(self)
         if dlg.exec():
+            pass
 
 
     def clearRef(self):
