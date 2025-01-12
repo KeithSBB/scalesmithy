@@ -1,5 +1,5 @@
 # Scale Smithy
-
+NOTE:  Thus software is prereleased!  Installation methods don't work yet
 A graphical tool for analysis of musical scales.
 
 ![Screenshot.png](help/Screenshot.png)
