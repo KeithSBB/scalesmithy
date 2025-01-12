@@ -7,9 +7,9 @@ import math
 from enum import Enum
 from math import sqrt
 import logging
-from PyQt6.QtCore import Qt, QPointF, QLineF
+from PyQt6.QtCore import Qt, QPointF, QLineF, QRectF
 from PyQt6.QtGui import QFont, QBrush, QPen
-from PyQt6.QtWidgets import QGraphicsTextItem, QGraphicsRectItem, QGraphicsLineItem, QGraphicsEllipseItem
+from PyQt6.QtWidgets import QGraphicsTextItem, QGraphicsRectItem, QGraphicsLineItem, QGraphicsEllipseItem, QGraphicsItem
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,80 @@ class Pos(Enum):
     RIGHT_CENTER = 3
     RADIAL_IN = 4
     RADIAL_OUT = 5
+
+
+
+
+class GraphicsTextItem(QGraphicsTextItem):
+    def __init__(self, text, font, tcolor, parent=None):
+        super().__init__( parent)
+        self.setFont(font)
+        self.setDefaultTextColor(tcolor)
+        if text[:3] == '<p>':
+            self.setHtml(text)
+        else:
+            self.setPlainText(text)
+
+        self.width = self.document().size().width()
+        self.height = 1.5*font.pointSizeF()
+        self.rect = QRectF(0, 7, self.width, self.height)
+
+    def boundingRect(self):
+        return self.rect
+
+    def centerPos(self):
+        return self.pos() + self.rect.center()
+
+    def setCenterPos(self, pos):
+        self.setPos(pos-self.rect.center())
+
+    def centerToEdgeTowardsRefPt(self, refPt):
+        '''
+        This method calculates the length from the center to the boundingrect edge
+        along the line from the center to refPt
+        :param refPt: QPointF
+        :return: float
+        method used:  the bounding Rect center Pt, width and height are known.
+        the rect is always aligned with the x and y axis.  The line from centerPt
+        to refPt forms a right triangle with centerPt (A), perpendicular to the horizontal or vertical edge(B)
+        and the intersection of the line with an edge (C). Knowns:
+        angle (a) B-A-C from line direction
+        side A-B
+        A-B =R*sin(90 - a), or R = (A-B) / sin(90 - a) = (A-B) / cos(a)
+        '''
+        # Calculate angle of line from center to refPt
+        line = refPt - self.centerPos()
+        ang = math.fabs(math.atan(line.y()/ line.x()))
+        angToRectCorner = math.fabs(math.atan(self.height / self.width))
+        if ang > angToRectCorner:
+            rst = (self.height / 2) / math.sin(ang)
+        else:
+            rst = (self.width / 2) / math.cos(ang)
+
+        return rst
+
+    def getMaxMinDistances(self,  refPt):
+        x1 = self.pos().x()
+        y1 = self.pos().y()
+        x2 = x1 + self.width
+        y2 = y1 + self.height
+        rectVerts = [QPointF(x1, y1)]
+        rectVerts.append(QPointF(x1, y2))
+        rectVerts.append(QPointF(x2, y1))
+        rectVerts.append(QPointF(x2, y2))
+        dists = []
+        for apt in rectVerts:
+            dists.append(QLineF(apt, refPt).length())
+        return (max(dists), min(dists))
+
+def drawScaleText(scene, pt, text, size=10, tcolor=Qt.GlobalColor.black):
+    font = QFont('[bold]')
+    font.setPointSize(size)
+    strItem = GraphicsTextItem(text, font, tcolor)
+    strItem.setCenterPos(QPointF(pt[0], pt[1]))
+    scene.addItem(strItem)
+    return strItem
+
 
 
 def drawText(scene, pt, text, size=10, position=Pos.CENTER, refPt=[0,0], tcolor=Qt.GlobalColor.black, txtWidth=None):
@@ -265,3 +339,6 @@ class CircleGraphicsItem(QGraphicsEllipseItem):
 
         # Call the default implementation to propagate the event
         super().mousePressEvent(event)
+
+
+

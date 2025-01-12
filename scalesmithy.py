@@ -22,18 +22,38 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphics
 
 import mido
 import argparse
+from logutils import *
 
-parser = argparse.ArgumentParser(
-        prog='Scale smithy',
-        description='Musical Scale analysis Application',
-        epilog='-by Keith Smith')
-parser.add_argument("-loglevel", nargs=1,
-                    default=["INFO"], help="Enter INFO, DEBUG, WARNING, CRITICAL, or ERROR ")
+# Parse arguments
+# --tclass classname
+# --tmethod methodname
+# --tlines 52,54
+args = parse_args()
 
-args = parser.parse_args()
+# Process the lines argument
+lines = [int(line.strip()) for line in args.tlines.split(",")] if args.tlines else None
 
-logging.basicConfig(level=args.loglevel[0], handlers=[logging.StreamHandler()])
-logger = logging.getLogger(__name__)
+# Setup logger with dynamic filtering
+logger = setup_logger(
+        log_level=logging.DEBUG,  # Always set global level to DEBUG
+        filter_params={
+            "tclass": args.tclass,
+            "tmethod": args.tmethod,
+            "tlines": lines,  },  )
+#
+# parser = argparse.ArgumentParser(
+#         prog='Scale smithy',
+#         description='Musical Scale analysis Application',
+#         epilog='-by Keith Smith')
+# parser.add_argument("-loglevel", nargs=1,
+#                     default=["INFO"], help="Enter INFO, DEBUG, WARNING, CRITICAL, or ERROR ")
+
+# args = parser.parse_args()
+
+
+
+# logging.basicConfig(level=args.loglevel[0], handlers=[logging.StreamHandler()])
+# logger = logging.getLogger(__name__)
 
 from musicalclasses import Scale, Chorder, StradellaBass, ChordLevel, ChordSymbol, MidiPattern
 from utils import drawText, drawCircle, Pos, Brushes, Pens, CircleGraphicsItem
@@ -958,8 +978,8 @@ class MainWindow(QMainWindow):
         self.settings.setValue("rootpos", self.rootPos)
         self.settings.endGroup()
         self.settings.beginGroup("chords")
-        self.settings.setValue("chordNameLevel", self.chordNameLevel)
-        self.settings.setValue("chordsymbology", self.chordSymbology)
+        self.settings.setValue("chordNameLevel", self.chorder.level)
+        self.settings.setValue("chordsymbology", self.chorder.symbology)
         self.settings.endGroup()
         self.settings.beginGroup("scale")
         self.settings.setValue("CurrentScale", self.primaryScale.name)
@@ -1197,9 +1217,9 @@ class MainWindow(QMainWindow):
             logger.warning(f"Scale Restore Error: {result}")
 
     def prefEdit(self):
-        dlg = PrefEditorDlg(self, self.chordNameLevel, self.chordSymbology, self.rootPos)
+        dlg = PrefEditorDlg(self, self.chorder.level, self.chorder.symbology, self.rootPos)
         if dlg.exec():
-            self.chordNameLevel = dlg.chordLevel
+            self.chorder.level = dlg.chordLevel
             self.chordSymbology = dlg.chordSymbol
             self.chorder.symbology = self.chordSymbology
             self.rootPos = dlg.rootPos

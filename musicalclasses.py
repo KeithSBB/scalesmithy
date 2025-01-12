@@ -2,18 +2,21 @@
 musicalclasses contains classes for musical objects such as Scales, chord creation
 etc.  They also handle creation and deletion of PyQt graphical items
 '''
+import math
 import re
 import time
 import logging
 from collections import deque
 from enum import property, Enum, Flag, auto
 from math import cos, radians, sin
+from PyQt6.QtCore import  QPointF, QLineF
+from PyQt6.QtWidgets  import QGraphicsRectItem, QMessageBox
 
 import mido
-from PyQt6.QtWidgets import QMessageBox
 
 
-from utils import Cumulative, drawText, Pos, drawCircle, drawLine
+
+from utils import Cumulative, drawText, Pos, drawCircle, drawLine, Pens, drawScaleText
 
 logger = logging.getLogger(__name__)
 
@@ -135,9 +138,9 @@ class Scale:
 
 
 
-    def drawScale(self, x0, y0, rmax, angOffset, pen, chordLevel, chorder, alignNote=None):
+    def drawScale(self, x0, y0, rs, angOffset, pen, chordLevel, chorder, alignNote=None):
         '''
-        This method draws the scale centered at x0, y0 with a maximumradius of rmax,
+        This method draws the scale centered at x0, y0 with a radius of rs,
         an angular offset (root position), QPen to use (color, etc), chordlevel to display (simple, all, etc.),
         and if the scale should be realigned to some other root position reference note. (None for primary,
         primary root note for reference scale)
@@ -145,6 +148,8 @@ class Scale:
         # delete current scale graphics
         self.deleteGraphicItems()
 
+        # If this is a reference scale (alignNote) then draw the scale family and mode in the center
+        #  and calculate the semitone delate required to align notes between the primary and reference.
         if alignNote:
             self.graphicItems.append(
                 drawText(self.scene, [x0, y0 - 10], self.name, 14, position=Pos.CENTER, tcolor=pen.color()))
@@ -154,46 +159,132 @@ class Scale:
         else:
             semitoneDelta = 0
 
-        start = (rmax * cos(radians(angOffset + (semitoneDelta * 30))),
-                 rmax * sin(radians(angOffset + (semitoneDelta * 30))))
-        pts = []
+        centerPt = QPointF(x0, y0)
+        rt = 0.9 * rs
+        if logger.getEffectiveLevel() == logging.DEBUG:
+            refPtItem = drawCircle(self.scene, x0, y0,2*rt, Pens().blue)
+            self.graphicItems.append(refPtItem)
 
-        for scaleDeg, i in enumerate(self._noteSemitonePositions ):
-            a = radians(angOffset + (i + semitoneDelta) * 30)
-            r = rmax
-            x = r * cos(a)
-            y = r * sin(a)
+        # statrPt is used to draw the side of the scale polygon.
+        startPt = (rs * cos(radians(angOffset + (semitoneDelta * 30))) + x0,
+                 rs * sin(radians(angOffset + (semitoneDelta * 30))) + y0)
 
-            rt = r * 1.12
-            xt = rt * cos(a)
-            yt = rt * sin(a)
-            # print(f"Scale degree = {scaleDeg}, chromatic index = {i}")
+        # scaleDeg starts with 0, not 1
+        for scaleDeg, semitoneIndx in enumerate(self._noteSemitonePositions ):
+            a = radians(angOffset + (semitoneIndx + semitoneDelta) * 30)
 
-            if i < 12:
+            # coordinates of scale vertex at semitone position
+            x = rs * cos(a) + x0
+            y = rs * sin(a) + y0
+
+            # xt and yt are the text reference point that all text is to lie within radial to x0, y0
+            xt = rt * cos(a) + x0
+            yt = rt * sin(a) + y0
+
+            # This section calculates the chords for the current scaledeg and draws them
+            if semitoneIndx < 12:
                 noteName = self.notes[scaleDeg]
                 relchordtonepos = self.getModeDegRelPositions(self.modeIndx, scaleDeg+1)
+
                 logger.debug(f"INPUT TO CHORDER: {noteName} has {relchordtonepos}")
                 chNames, hoverTexts = chorder.getChordNames(noteName, relchordtonepos)
-                #Fix this
+
+
+                tmpgitems = []
+                totalWidth = 0
+
                 for cindx, chName in enumerate(chNames):
-                    gitem = drawText(self.scene, [0.85 * (xt + x0), 0.85 * (yt + y0 )], chName, size=14, txtWidth=0,
-                                     position=Pos.RADIAL_IN, refPt=[x0, y0], tcolor=pen.color())
+                    # This is where the graphical text items are created, all at the same point
+                    gitem = drawScaleText(self.scene, [xt,yt], chName, size=14, tcolor=pen.color())
+                    self.graphicItems.append(gitem)
                     if len(hoverTexts[cindx]) > 0:
                         gitem.setToolTip(hoverTexts[cindx])
 
-                    self.graphicItems.append(gitem)
 
-            pts.append((x, y))
-            self.graphicItems.append(drawCircle(self.scene, x + x0, y + y0, 10, pen))
+
+                    tmpgitems.append(gitem)
+
+                # tmpgitem contains all the text graphic items and their bounding rectangles
+                # these will be used to adjust their postions for good layout
+
+                # The angles relative to the chromatic circle radial to the prior (CCW)
+                # and next (CW) scale degrees are used as guides to position chords
+                relAngCCW = math.radians((180 - relchordtonepos[1] * 30)/2)
+                relAngCW = math.radians(-(180 - (12 - relchordtonepos[-2] ) * 30)/2)
+                logger.debug(f"{relchordtonepos[1]} and {relchordtonepos[-2]}")
+                logger.debug(f" Chord sector ranges from {math.degrees(relAngCW)} to {math.degrees(relAngCCW)}")
+                relAngs = [relAngCCW, 0, relAngCW]
+                dr = 0
+                relIndx = 0
+                cumilativedr = [0, 0, 0]
+                for indx, agi in enumerate(tmpgitems):
+                    if indx > 0:
+                        if indx <=3:
+                            innerIndx = 0
+                        else:
+                            innerIndx = indx - 3
+
+                        ang = math.pi + a - relAngs[relIndx]
+                        refPt = QPointF(250 * math.cos(ang) + xt, 250 * math.sin(ang) + yt)
+
+                        # This part should over lay a few and figure out angular (or perpendicular)
+                        # Spread
+                        inR = tmpgitems[innerIndx].centerToEdgeTowardsRefPt(refPt)
+                        r = agi.centerToEdgeTowardsRefPt(refPt)
+                        dr = r + inR + cumilativedr[relIndx]
+                        dx = dr * math.cos(ang)
+                        dy = dr * math.sin(ang)
+
+                        agi.moveBy(dx, dy)
+
+                        #second move
+                        if relIndx > 0:
+                            inR = tmpgitems[indx - 1].centerToEdgeTowardsRefPt(agi.centerPos())
+                            r = agi.centerToEdgeTowardsRefPt(tmpgitems[indx - 1].centerPos())
+                            idealr = inR + r
+                            logger.debug(idealr)
+                            aline = QLineF(tmpgitems[indx - 1].centerPos(), agi.centerPos())
+                            actualr = aline.length()
+                            tdr = idealr - actualr
+                            tmpAng = math.radians(aline.angle())
+
+                            dx = tdr * math.cos(tmpAng)
+                            dy = tdr * math.sin(tmpAng)
+                            agi.moveBy(dx, dy)
+
+                        cumilativedr[relIndx] += dr
+
+                        relIndx = (relIndx + 1) % 3
+
+
+                        if logger.getEffectiveLevel() == logging.DEBUG:
+                            txtcenPtItem = drawCircle(self.scene, refPt.x(), refPt.y(), 2, Pens().blue)
+                            self.graphicItems.append(txtcenPtItem)
+
+                    if logger.getEffectiveLevel() == logging.DEBUG:
+                        txtcenPtItem = drawCircle(self.scene, agi.centerPos().x(), agi.centerPos().y(), 2 , Pens().red)
+                        self.graphicItems.append(txtcenPtItem)
+                        rectItem = QGraphicsRectItem(agi.boundingRect())
+                        rectItem.setPos(agi.pos())
+                        self.scene.addItem(rectItem)
+                        self.graphicItems.append(rectItem)
+
+
+
+
+            # Draw a small circle at the scaledeg  vertex
+            self.graphicItems.append(drawCircle(self.scene, x, y, 10, pen))
+
+            # if ref scale (alignNote) draw an additional circle to identify the root
             if scaleDeg == 0 and alignNote:
-                self.graphicItems.append(drawCircle(self.scene, x + x0, y + y0, 16, pen))
+                self.graphicItems.append(drawCircle(self.scene, x, y, 16, pen))
 
-        for pt in pts:
-            stop = pt
+            # draw a side of the scale polygon
             self.graphicItems.append(
-                drawLine(self.scene, start[0] + x0, start[1] + y0, stop[0] + x0, stop[1] + y0, pen=pen))
+                drawLine(self.scene, startPt[0] , startPt[1] , x , y , pen=pen))
+            startPt = (x,y)
 
-            start = stop
+
 
     def deleteGraphicItems(self):
         logger.debug(f'deleting scale {len(self.graphicItems)} items')
@@ -466,7 +557,7 @@ class Chorder():
                            (0, 3, 5, 8, 11): {'mMaj13(m13)': ['R_, maj, dim', 'R_, min, dim', 'R, min-4, min-1']}}
 
         chordTypes = nydanaIntervals
-        chordNames = [f'<p>{noteName} </p>']
+        chordNames = [ f'<p>{noteName} </p>']
         hoverText = ['']
 
         logger.debug(f'ChordLevel: {self.level}')
@@ -490,14 +581,14 @@ class Chorder():
                 if all(elem in relchordTonePos for elem in achdtypints):
                     for chdName in chordTypes[achdtypints]:
                         fullChdNam = self.chordformater(chdName)
-                        htxt = chordTypes[achdtypints][chdName][0]
+                        htxt = chordTypes[achdtypints][chdName]
+
 
                     if len(cName) == 0:
                         chordNames.append(fullChdNam)
-                        hoverText.append(htxt )
                     else:
                         chordNames.append(', ' + fullChdNam)
-                        hoverText.append(', \n' + htxt)
+                    hoverText.append('\n'.join(htxt))
 
             if len(cName) == 0:
                 cName = f'<p>{noteName}: {relchordTonePos} </p>'
