@@ -2,26 +2,25 @@
 musicalclasses contains classes for musical objects such as Scales, chord creation
 etc.  They also handle creation and deletion of PyQt graphical items
 '''
-import math
+import logging
 import re
 import time
-import logging
 from collections import deque
 from enum import property, Enum, Flag, auto
 from math import cos, radians, sin
-from PyQt6.QtCore import  QPointF, QLineF
-from PyQt6.QtWidgets  import QGraphicsRectItem, QMessageBox
 
 import mido
+from PyQt6.QtCore import QPointF
 
+from PyQt6.QtWidgets import  QMessageBox, QGraphicsPolygonItem
 
-
-from utils import Cumulative, drawText, Pos, drawCircle, drawLine, Pens, drawScaleText
+from utils import Cumulative, drawText, Pos, drawCircle, drawLine, Pens, TextPentagonContainer
 
 logger = logging.getLogger(__name__)
 
 sharp = '<sup>#</sup>'
 flat = '<sup>♭</sup>'
+
 
 class ChordLevel(Enum):
     OFF = 0
@@ -34,6 +33,7 @@ class ChordSymbol(Enum):
     RAW = 0
     JAZZ = 1
     COMMON = 2
+
 
 class Scale:
     '''
@@ -53,7 +53,6 @@ class Scale:
     '''
     allKeys = ["None", "C", "C" + sharp + '/D' + flat, "D", "D" + sharp + "/E" + flat, "E", "F",
                "F" + sharp + "/G" + flat, "G", "G" + sharp + "/A" + flat, "A", "A" + sharp + "/B" + flat, "B"]
-
 
     def __init__(self, name, scaleDef, scene):
         self.name = name
@@ -116,7 +115,7 @@ class Scale:
 
     def getModeDegRelPositions(self, modeIndx, scaledeg=1):
         rotIntvls = self.firstModeIntervals.copy()
-        rotIntvls.rotate(-(self.modeIndx + scaledeg -1))
+        rotIntvls.rotate(-(self.modeIndx + scaledeg - 1))
         rotIntvls.appendleft(0)
         return Cumulative(list(rotIntvls))
 
@@ -131,14 +130,10 @@ class Scale:
             # construct a chromatic list of 12 notes starting with the root
             offset = Scale.allKeys[1:].index(self._key)
             self._notes = [Scale.allKeys[1:][(i + offset) % len(Scale.allKeys[1:])] for i, x in
-                          enumerate(Scale.allKeys[1:])]
-            self._notes = [self.notes[i] for i in self._noteSemitonePositions [:-1]]
+                           enumerate(Scale.allKeys[1:])]
+            self._notes = [self.notes[i] for i in self._noteSemitonePositions[:-1]]
 
-
-
-
-
-    def drawScale(self, x0, y0, rs, angOffset, pen, chordLevel, chorder, alignNote=None):
+    def drawScale(self, centerPt, rs, angOffset, pen, chordLevel, chorder, alignNote=None, chordTextDepthFactor=0.75):
         '''
         This method draws the scale centered at x0, y0 with a radius of rs,
         an angular offset (root position), QPen to use (color, etc), chordlevel to display (simple, all, etc.),
@@ -152,144 +147,120 @@ class Scale:
         #  and calculate the semitone delate required to align notes between the primary and reference.
         if alignNote:
             self.graphicItems.append(
-                drawText(self.scene, [x0, y0 - 10], self.name, 14, position=Pos.CENTER, tcolor=pen.color()))
+                    drawText(self.scene, centerPt - QPointF(0, 10), self.name, 14, position=Pos.CENTER, pen=pen))
             self.graphicItems.append(
-                drawText(self.scene, [x0, y0 + 10], self.mode, 14, position=Pos.CENTER, tcolor=pen.color()))
+                    drawText(self.scene, centerPt + QPointF(0, 10), self.mode, 14, position=Pos.CENTER, pen=pen))
             semitoneDelta = Scale.allKeys.index(self._key) - Scale.allKeys.index(alignNote)
         else:
             semitoneDelta = 0
 
-        centerPt = QPointF(x0, y0)
-        rt = 0.9 * rs
+        rt = 0.97 * rs
         if logger.getEffectiveLevel() == logging.DEBUG:
-            refPtItem = drawCircle(self.scene, x0, y0,2*rt, Pens().blue)
+            refPtItem = drawCircle(self.scene, centerPt, 2 * rt, Pens().blue)
             self.graphicItems.append(refPtItem)
 
-        # statrPt is used to draw the side of the scale polygon.
-        startPt = (rs * cos(radians(angOffset + (semitoneDelta * 30))) + x0,
-                 rs * sin(radians(angOffset + (semitoneDelta * 30))) + y0)
+        # # statrPt is used to draw the side of the scale polygon.
+        # startPt = QPointF(rs * cos(radians(angOffset + (semitoneDelta * 30))) + x0,
+        #            rs * sin(radians(angOffset + (semitoneDelta * 30))) + y0)
 
         # scaleDeg starts with 0, not 1
-        for scaleDeg, semitoneIndx in enumerate(self._noteSemitonePositions ):
-            a = radians(angOffset + (semitoneIndx + semitoneDelta) * 30)
+        # note: increease in scale degree is CW while angle is CCW
+        for scaleDeg, semitoneIndx in enumerate(self._noteSemitonePositions):
+            a = radians(angOffset - (semitoneIndx + semitoneDelta) * 30)
 
             # coordinates of scale vertex at semitone position
-            x = rs * cos(a) + x0
-            y = rs * sin(a) + y0
+            x = rs * cos(a) + centerPt.x()
+            y = rs * sin(a) + centerPt.y()
+            vtxPt = QPointF(x, y)
 
             # xt and yt are the text reference point that all text is to lie within radial to x0, y0
-            xt = rt * cos(a) + x0
-            yt = rt * sin(a) + y0
+            xt = rt * cos(a) + centerPt.x()
+            yt = rt * sin(a) + centerPt.y()
+
+            refPt = QPointF(xt, yt)
 
             # This section calculates the chords for the current scaledeg and draws them
             if semitoneIndx < 12:
                 noteName = self.notes[scaleDeg]
-                relchordtonepos = self.getModeDegRelPositions(self.modeIndx, scaleDeg+1)
+                logger.debug(f"========== {noteName} ==========")
+                relchordtonepos = self.getModeDegRelPositions(self.modeIndx, scaleDeg + 1)
 
-                logger.debug(f"INPUT TO CHORDER: {noteName} has {relchordtonepos}")
+                logger.debug(f"INPUT TO CHORDER:  has {relchordtonepos}")
                 chNames, hoverTexts = chorder.getChordNames(noteName, relchordtonepos)
 
-
                 tmpgitems = []
-                totalWidth = 0
-
+                popuplist = []
                 for cindx, chName in enumerate(chNames):
                     # This is where the graphical text items are created, all at the same point
-                    gitem = drawScaleText(self.scene, [xt,yt], chName, size=14, tcolor=pen.color())
+                    if cindx == 0:
+                        gitem = drawText(self.scene, QPointF(xt, yt),
+                                         chName, size=14, position=Pos.RADIAL_IN, pen=pen)
+                        self.graphicItems.append(gitem)
+                        tmpgitems.append(gitem)
+
+                    # if len(hoverTexts[cindx]) > 0:
+                    #     gitem.setToolTip(hoverTexts[cindx])
+
+                    if cindx > 0:
+                        if chorder.chordLevel == ChordLevel.ALL:
+                            popuplist.append([chName, hoverTexts[cindx]])
+                        else:
+                            gitem = drawText(self.scene, QPointF(xt, yt), chName, size=14, pen=pen)
+                            self.graphicItems.append(gitem)
+                            tmpgitems.append(gitem)
+                            gitem.setToolTip(hoverTexts[cindx])
+
+                if chorder.chordLevel == ChordLevel.ALL:
+                    gitem = drawText(self.scene, QPointF(xt, yt), popuplist, size=14, pen=pen)
                     self.graphicItems.append(gitem)
-                    if len(hoverTexts[cindx]) > 0:
-                        gitem.setToolTip(hoverTexts[cindx])
-
-
-
                     tmpgitems.append(gitem)
 
+                '''Approach
+                change tmpgitems into a queue where items and be read and popped off it
+                While tmpgitems is not empty:
+                1. start with the first graphicaltextitem in the queue which is the note or scaledeg
+                    by placing it in the vertex position
+                2. Read the next item in tmptems
+                3. Position item in the next otter ring referenced to the
+                    previous item in the queue and the txtpolygonitem edges or other items 
+                4. check that the item point are not outside the txtpoly boundary. If they are then
+                   reposition the item to yet another outter ring and go back to step 3.  If the entire item is outside the
+                   txtpoly then stop.  Otherwise,
+                5. pop the item off tmpgitems. 
+                6. repeat while..
+                '''
                 # tmpgitem contains all the text graphic items and their bounding rectangles
                 # these will be used to adjust their postions for good layout
 
-                # The angles relative to the chromatic circle radial to the prior (CCW)
-                # and next (CW) scale degrees are used as guides to position chords
-                relAngCCW = math.radians((180 - relchordtonepos[1] * 30)/2)
-                relAngCW = math.radians(-(180 - (12 - relchordtonepos[-2] ) * 30)/2)
-                logger.debug(f"{relchordtonepos[1]} and {relchordtonepos[-2]}")
-                logger.debug(f" Chord sector ranges from {math.degrees(relAngCW)} to {math.degrees(relAngCCW)}")
-                relAngs = [relAngCCW, 0, relAngCW]
-                dr = 0
-                relIndx = 0
-                cumilativedr = [0, 0, 0]
-                for indx, agi in enumerate(tmpgitems):
-                    if indx > 0:
-                        if indx <=3:
-                            innerIndx = 0
-                        else:
-                            innerIndx = indx - 3
-
-                        ang = math.pi + a - relAngs[relIndx]
-                        refPt = QPointF(250 * math.cos(ang) + xt, 250 * math.sin(ang) + yt)
-
-                        # This part should over lay a few and figure out angular (or perpendicular)
-                        # Spread
-                        inR = tmpgitems[innerIndx].centerToEdgeTowardsRefPt(refPt)
-                        r = agi.centerToEdgeTowardsRefPt(refPt)
-                        dr = r + inR + cumilativedr[relIndx]
-                        dx = dr * math.cos(ang)
-                        dy = dr * math.sin(ang)
-
-                        agi.moveBy(dx, dy)
-
-                        #second move
-                        if relIndx > 0:
-                            inR = tmpgitems[indx - 1].centerToEdgeTowardsRefPt(agi.centerPos())
-                            r = agi.centerToEdgeTowardsRefPt(tmpgitems[indx - 1].centerPos())
-                            idealr = inR + r
-                            logger.debug(idealr)
-                            aline = QLineF(tmpgitems[indx - 1].centerPos(), agi.centerPos())
-                            actualr = aline.length()
-                            tdr = idealr - actualr
-                            tmpAng = math.radians(aline.angle())
-
-                            dx = tdr * math.cos(tmpAng)
-                            dy = tdr * math.sin(tmpAng)
-                            agi.moveBy(dx, dy)
-
-                        cumilativedr[relIndx] += dr
-
-                        relIndx = (relIndx + 1) % 3
 
 
-                        if logger.getEffectiveLevel() == logging.DEBUG:
-                            txtcenPtItem = drawCircle(self.scene, refPt.x(), refPt.y(), 2, Pens().blue)
-                            self.graphicItems.append(txtcenPtItem)
+                # txtPoly defines a pentagon boundery that reqires text to stay within it
+                txtPoly = TextPentagonContainer( relchordtonepos, rt, vtxPt, centerPt, chordTextDepthFactor )
+                txtPoly.gTxtItems = tmpgitems
+                txtPoly.layoutGrphTxtItems()
 
-                    if logger.getEffectiveLevel() == logging.DEBUG:
-                        txtcenPtItem = drawCircle(self.scene, agi.centerPos().x(), agi.centerPos().y(), 2 , Pens().red)
-                        self.graphicItems.append(txtcenPtItem)
-                        rectItem = QGraphicsRectItem(agi.boundingRect())
-                        rectItem.setPos(agi.pos())
-                        self.scene.addItem(rectItem)
-                        self.graphicItems.append(rectItem)
+                if logger.getEffectiveLevel() == logging.DEBUG:
+                    polyItem = QGraphicsPolygonItem(txtPoly)
+                    self.scene.addItem(polyItem)
+                    self.graphicItems.append(polyItem)
 
 
-
-
+            scpt = QPointF(x, y)
             # Draw a small circle at the scaledeg  vertex
-            self.graphicItems.append(drawCircle(self.scene, x, y, 10, pen))
+            self.graphicItems.append(drawCircle(self.scene, scpt, 10, pen))
 
             # if ref scale (alignNote) draw an additional circle to identify the root
             if scaleDeg == 0 and alignNote:
-                self.graphicItems.append(drawCircle(self.scene, x, y, 16, pen))
+                self.graphicItems.append(drawCircle(self.scene, scpt, 16, pen))
 
             # draw a side of the scale polygon
-            self.graphicItems.append(
-                drawLine(self.scene, startPt[0] , startPt[1] , x , y , pen=pen))
-            startPt = (x,y)
-
-
+            if scaleDeg > 0:
+                self.graphicItems.append(drawLine(self.scene, startPt, scpt, pen=pen))
+            startPt = QPointF(x, y)
 
     def deleteGraphicItems(self):
         logger.debug(f'deleting scale {len(self.graphicItems)} items')
         for anItem in self.graphicItems:
-            # print(anItem)
             self.scene.removeItem(anItem)
             del anItem
         self.graphicItems = []
@@ -304,7 +275,6 @@ class Scale:
         msg = mido.Message('note_off', note=midiNote, velocity=0)
         port.send(msg)
 
-
     def playScale(self, midiPortName, progNum, tempo, octaves, scalePatterns):
         # Initialize MIDI output
         try:
@@ -314,7 +284,7 @@ class Scale:
             msgBox.setText("You must select a valid MIDI device's input port from Midi settings")
             msgBox.setWindowTitle("MIDI Port ERROR")
             msgBox.setIcon(QMessageBox.Icon.Critical)
-            msgBox.setStandardButtons(QMessageBox.StandardButton.Ok )
+            msgBox.setStandardButtons(QMessageBox.StandardButton.Ok)
 
             result = msgBox.exec()
             return
@@ -324,7 +294,7 @@ class Scale:
             msgBox.setText("You must select a key note for the scale root first")
             msgBox.setWindowTitle("MIDI Play ERROR")
             msgBox.setIcon(QMessageBox.Icon.Critical)
-            msgBox.setStandardButtons(QMessageBox.StandardButton.Ok )
+            msgBox.setStandardButtons(QMessageBox.StandardButton.Ok)
 
             result = msgBox.exec()
             return
@@ -339,16 +309,15 @@ class Scale:
 
         # make assending semitone offsets from key
         keyNum = self.noteMidiNum[self.key]
-        noteNumberSequence = [keyNum + st + octOff for octOff in octaveOffsets for st in self.noteSemitonePositions[:-1] ]
+        noteNumberSequence = [keyNum + st + octOff for octOff in octaveOffsets for st in
+                              self.noteSemitonePositions[:-1]]
         noteNumberSequence.append(keyNum + 12 + octaveOffsets[-1])
-        #print(noteNumberSequence)
-        #print(scalePatterns)
 
-        numOfNotesToPlay = ((len(self.noteSemitonePositions) - 1)* octaves ) + 1
+        numOfNotesToPlay = ((len(self.noteSemitonePositions) - 1) * octaves) + 1
 
         reversedNoteNumberSequence = list(reversed(noteNumberSequence))
         logger.debug(reversedNoteNumberSequence)
-        revIndxToStartFrom = len(reversedNoteNumberSequence ) - numOfNotesToPlay
+        revIndxToStartFrom = len(reversedNoteNumberSequence) - numOfNotesToPlay
 
         if MidiPattern.LINEAR_UP in scalePatterns:
             for anote in noteNumberSequence[:numOfNotesToPlay]:
@@ -362,13 +331,13 @@ class Scale:
             for indx, anote in enumerate(noteNumberSequence[:numOfNotesToPlay]):
                 self.playNote(port, anote, noteDuration)
                 if indx < numOfNotesToPlay - 1:
-                    self.playNote(port, noteNumberSequence[indx+1], noteDuration)
-                    self.playNote(port, noteNumberSequence[indx+2], noteDuration)
+                    self.playNote(port, noteNumberSequence[indx + 2], noteDuration)
+                    #self.playNote(port, noteNumberSequence[indx + 2], noteDuration)
 
         if MidiPattern.PATTERN_DOWN in scalePatterns:
-            for indx,anote in enumerate(reversedNoteNumberSequence[revIndxToStartFrom:]):
-                self.playNote(port, reversedNoteNumberSequence[revIndxToStartFrom+indx - 2], noteDuration)
-                self.playNote(port, reversedNoteNumberSequence[revIndxToStartFrom+indx - 1], noteDuration)
+            for indx, anote in enumerate(reversedNoteNumberSequence[revIndxToStartFrom:]):
+                self.playNote(port, reversedNoteNumberSequence[revIndxToStartFrom + indx - 2], noteDuration)
+               # self.playNote(port, reversedNoteNumberSequence[revIndxToStartFrom + indx - 1], noteDuration)
                 self.playNote(port, anote, noteDuration)
 
         if MidiPattern.ARPEGGIO_UP in scalePatterns:
@@ -392,7 +361,7 @@ class Chorder():
         self.scene = scene
         self.symbology = chordSymbology
         self.chordLevel = level
-        self.graphicItems =[]
+        self.graphicItems = []
 
     @property
     def chordLevel(self):
@@ -415,14 +384,11 @@ class Chorder():
         elif self.chordsymbology == ChordSymbol.COMMON:
             self.rep = {'sev': '<sup>7</sup>'}
         elif self.chordsymbology == ChordSymbol.JAZZ:
-            self.rep = {'dim': '<sup>o</sup>',
-                        'aug': '<sup>+</sup>',
-                        'sev': '<sup>7</sup>',
+            self.rep = {'dim': '<sup>o</sup>', 'aug': '<sup>+</sup>', 'sev': '<sup>7</sup>',
                         'maj': '<span class="music-symbol" style="font-family: Arial Unicode MS, Lucida Sans Unicode;">Δ</span>',
                         'min': '-'}
         else:
             Exception("Chorder error due to chordsymbology unknow")
-
 
     def chordformater(self, raw):
         ''' reformats chord to a specific symbology'''
@@ -433,7 +399,7 @@ class Chorder():
 
     def getChordNames(self, noteName, relchordTonePos):
         '''
-        this method takes a scale, the scale degree and the note at that scale degree and returns a string
+        This method takes a scale, the scale degree and the note at that scale degree and returns a string
         of chords at Note that fit in the scale.  This provides an aid in music composition as to what chords
         can be used within a particular scale.   There are multiple levels:
         Simple:min, maj, 7th, dim and aug
@@ -449,22 +415,18 @@ class Chorder():
 
         '''
 
-        basicChordTypes = {(4, 7, 10): {'7<sup>th</sup>': ['?']}, (4, 7): {'maj': ['?']}, (3, 7): {'min': ['?']},
-                           (3, 6): {'dim': ['?']}}
+        basicChordTypes = {(4, 7, 10): {'7': ['R, sev']},
+                           (4, 7): {'maj': ['R, maj']},
+                           (3, 7): {'min': ['R, min']},
+                           (3, 6): {'dim': ['R, dim']}}
 
-        advChordTypes = {(4, 8): {'aug': ['?']}, (2, 7): {'sus2': ['?']}}  # C+(9), C6, C6/E
+        advChordTypes  = {(4, 8): {'aug': ['R-4, sev']}, (2, 7): {'7sus2': ['R, min+1']}}
 
-        allChordtypes = {(5, 7): {'sus4': ['?']}, (2, 5, 7): {'sus24': ['?']}}
-
-        accidentals = {(2, 5, 9): {'13<sup>th</sup>': ['?']}, (2, 5): {'11<sup>th</sup>': ['?']},
-                       (2): {'9<sup>th</sup>': ['?']}}
-
-        nydanaIntervals = {(0, 4, 7): {'maj': ['maj']},
-                           (0, 3, 7): {'min': ['min']},
-                           (0, 4, 7, 10): {'7<sup>th</sup>': ['7th']},
-                           (4, 8): {'aug': ['R-4, 7th']},
-                           (0, 3, 6): {'dim': ['R, dim', 'R, dim-3', 'R_, dim+1'],
-                                       'm(-5)': ['R, dim-3', 'R_, dim+1']},
+        nydanaIntervals = {(0, 4, 7): {'maj': ['R, maj']},
+                           (0, 3, 7): {'min': ['R, min']},
+                           (0, 4, 7, 10): {'7': ['R, sev']},
+                           (4, 8): {'aug': ['R-4, sev']},
+                           (0, 3, 6): {'dim': ['R, dim', 'R, dim-3', 'R_, dim+1'], 'm(-5)': ['R, dim-3', 'R_, dim+1']},
                            (0, 2, 7, 10): {'7sus2': ['R, min+1'], '9(≠3)': ['R, min+1']},
                            (0, 3, 6, 9): {'dim7': ['R, dim-3, dim', 'R_, dim-2, (dim+1)', 'R_, dim-2, (dim-5)']},
                            (0, 2, 4, 8): {'(+5, 9)': ['R_, sev-4']},
@@ -494,8 +456,7 @@ class Chorder():
                            (0, 2, 5, 8, 10): {'11(+5)': ['R, maj-2, dim-1', 'R, maj-2, min-1']},
                            (0, 2, 6, 7, 10): {'11(+11)': ['R, min+1, sev+2']},
                            (0, 2, 4, 7, 9, 10): {'13': ['R, min+1, min+3'], '13/R+4': ['R+4, min-3, min-1']},
-                           (0, 2, 4, 5, 9, 10): {'13': ['R, sev, min+2']},
-                           (0, 4, 5, 9, 10): {'13': ['R, maj-1, sev']},
+                           (0, 2, 4, 5, 9, 10): {'13': ['R, sev, min+2']}, (0, 4, 5, 9, 10): {'13': ['R, maj-1, sev']},
                            (0, 2, 5, 7, 9, 10): {'13(≠3)': ['R, maj-1, min+1', 'R, min+1, min+2']},
                            (0, 2, 5, 9, 10): {'13(≠3)': ['R, maj-1, maj-2']},
                            (0, 1, 4, 9, 10): {'13(m9)': ['R, sev, maj+3']},
@@ -508,10 +469,8 @@ class Chorder():
                                               'maj9/R+2': ['R+2, maj-1, maj-2']},
                            (0, 2, 7, 11): {'maj9(≠3)': ['R, maj+1']},
                            (0, 2, 4, 8, 11): {'maj9(+5)': ['R_, maj-4, sev-4', 'R_, sev-4, dim-3']},
-                           (0, 2, 5, 11): {'maj11': ['R, dim+2']},
-                           (0, 2, 5, 7, 11): {'maj11': ['R, maj+1, sev+1']},
-                           (0, 2, 5, 8, 11): {
-                               'maj11(+5)': ['R_, dim, (dim-3)', 'R, min-1, dim+2', 'R, dim-1, dim+2']},
+                           (0, 2, 5, 11): {'maj11': ['R, dim+2']}, (0, 2, 5, 7, 11): {'maj11': ['R, maj+1, sev+1']},
+                           (0, 2, 5, 8, 11): {'maj11(+5)': ['R_, dim, (dim-3)', 'R, min-1, dim+2', 'R, dim-1, dim+2']},
                            (0, 2, 4, 7, 9, 11): {'maj13': ['R, maj+1, min+3']},
                            (0, 4, 7, 9, 11): {'maj13': ['R_, min-4, min-5']},
                            (0, 2, 5, 7, 9, 11): {'maj13(≠3)': ['R, maj-1, maj+1']},
@@ -525,8 +484,7 @@ class Chorder():
                                           'm6/R+7': ['R+7, dim-1, (min-1)'],
                                           'm6/R+9': ['R+9, min-3, (dim-3)', 'R_+9, min+1, (dim+1)']},
                            (0, 1, 3, 7, 9): {'m6(m9)': ['R, min, sev+3']},
-                           (0, 3, 7, 10): {'m7': ['R, maj-3, (min)', 'R_, maj+1'],
-                                           'm7/R+10': ['R+10, min+2, (maj-1)']},
+                           (0, 3, 7, 10): {'m7': ['R, maj-3, (min)', 'R_, maj+1'], 'm7/R+10': ['R+10, min+2, (maj-1)']},
                            (0, 1, 3, 7, 10): {'m7(m9)': ['R, maj-3, sev-3', 'R, sev-3, dim-2', 'R, maj-3, dim-2']},
                            (0, 3, 6, 10): {'m7(-5)': ['R, min-3', 'R_, min+1'], 'm7(-5)/R+3': ['R+3, min, dim'],
                                            'm7(-5)/R+6': ['R_+6, min-5, dim-5'],
@@ -552,61 +510,53 @@ class Chorder():
                            (0, 3, 5, 7, 9, 11): {'mMaj13': ['R, dim, sev+1']},
                            (0, 2, 3, 7, 9, 11): {'mMaj13': ['R, maj+1, dim']},
                            (0, 2, 3, 5, 9, 11): {'mMaj13': ['R, dim, dim+2']},
-                           (0, 3, 6, 9, 11): {
-                               'mMaj13(+11)': ['R_, maj-3, sev-3', 'R_, maj-3, dim-5', 'R_, dim-5, sev-3']},
+                           (0, 3, 6, 9, 11): {'mMaj13(+11)': ['R_, maj-3, sev-3', 'R_, maj-3, dim-5', 'R_, dim-5, sev-3']},
                            (0, 3, 5, 8, 11): {'mMaj13(m13)': ['R_, maj, dim', 'R_, min, dim', 'R, min-4, min-1']}}
 
-        chordTypes = nydanaIntervals
-        chordNames = [ f'<p>{noteName} </p>']
+        chordNames = [f'<p>{noteName} </p>']
         hoverText = ['']
 
         logger.debug(f'ChordLevel: {self.level}')
 
         if self.level == ChordLevel.BASIC_ACCORD:
-            ctstop = 4
+            chordTypes = basicChordTypes
         elif self.level == ChordLevel.ADV_ACCORD:
-            ctstop = 20
+            chordTypes = {**basicChordTypes, **advChordTypes }
         elif self.level == ChordLevel.ALL:
-            ctstop = len(chordTypes.keys())
+            chordTypes = nydanaIntervals
 
         if self.level != ChordLevel.OFF:
-            cName = ''
-            htxt = ''
+            # cName = ''
+            # htxt = ''
             for ctindx, achdtypints in enumerate(chordTypes):
-                if ctindx > ctstop:
-                    if len(cName) != 0:
-                        continue
-                    else:
-                        break
                 if all(elem in relchordTonePos for elem in achdtypints):
                     for chdName in chordTypes[achdtypints]:
                         fullChdNam = self.chordformater(chdName)
                         htxt = chordTypes[achdtypints][chdName]
-
-
-                    if len(cName) == 0:
                         chordNames.append(fullChdNam)
-                    else:
-                        chordNames.append(', ' + fullChdNam)
-                    hoverText.append('\n'.join(htxt))
+                        hoverText.append('\n'.join(htxt))
+                    #
+                    # if len(cName) == 0:
+                    #     chordNames.append(fullChdNam)
+                    # else:
+                    #     chordNames.append(', ' + fullChdNam)
 
-            if len(cName) == 0:
-                cName = f'<p>{noteName}: {relchordTonePos} </p>'
-            else:
-                cName = f'<p>{noteName}: ' + cName + '</p>'
+            #
+            # if len(cName) == 0:
+            #     cName = f'<p>{noteName}: {relchordTonePos} </p>'
+            # else:
+            #     cName = f'<p>{noteName}: ' + cName + '</p>'
 
-
-
-        return (chordNames, hoverText )
+        return (chordNames, hoverText)
 
     def drawChordKey(self, x, y):
         self.deleteGraphicItems()
         if self.symbology == ChordSymbol.RAW:
             pass
         elif self.symbology == ChordSymbol.COMMON:
-            txtgi =drawText(self.scene,[x,y], "7 = dom 7th chord", 12, Pos.LEFT_CENTER)
+            txtgi = drawText(self.scene, QPointF(x, y), "7 = dom 7th chord", 12, Pos.RIGHT_CENTER)
         elif self.symbology == ChordSymbol.JAZZ:
-            txtgi =drawText(self.scene, [x, y], "Δ = maj\n- = min\n+ = aug\n7 = dom 7th ", 12, Pos.LEFT_CENTER)
+            txtgi = drawText(self.scene, QPointF(x, y), "Δ = maj\n- = min\n+ = aug\n7 = dom 7th ", 12, Pos.RIGHT_CENTER)
         self.graphicItems.append(txtgi)
 
     def deleteGraphicItems(self):
@@ -617,13 +567,16 @@ class Chorder():
 
 
 class StradellaBass():
-    def __init__(self, scene, pen):
+    def __init__(self, scene, x0, y0, pen):
         self.scene = scene
+        self.x0 = x0
+        self.y0 = y0
         self.pen = pen
         self.graphicItems = []
 
-    def draw_Stradella(self, x0, y0, notePositions, showStradella) :
+    def draw_Stradella(self, notePositions, showStradella):
         self.deleteGraphicItems()
+
         if showStradella:
             # Draws the bass and couter-bass rows relative to each other
             buttonR = 23
@@ -637,29 +590,24 @@ class StradellaBass():
                        ['m2', 'm6', 'm3', 'm7', 'P4', 'R', 'P5', 'M2', 'M6', 'M3', 'M7', 'T', 'm2', 'm6']]
             for xindx in range(numOfRows):
                 for yindx in range(2):
-                    x = x0 + (xindx * spacing) - xOffset + (yindx * rOffset)
-                    y = y0 + (yindx * spacing) - yOffset
+                    sx = self.x0 + (xindx * spacing) - xOffset + (yindx * rOffset)
+                    sy = self.y0 - (yindx * spacing) + yOffset
                     text = keyints[yindx][xindx]
                     if intervlIndcies.index(text) in notePositions:
                         pen = self.pen.black
                     else:
                         pen = self.pen.lightGray
-                    self.graphicItems.append(drawCircle(self.scene, x, y, 2 * buttonR, pen))
+                    spt = QPointF(sx, sy)
+                    self.graphicItems.append(drawCircle(self.scene, spt, 2 * buttonR, pen))
 
-                    self.graphicItems.append(drawText(self.scene, [x, y],
-                                                      text, size=16, tcolor=pen.color()))
-
+                    self.graphicItems.append(drawText(self.scene, spt, text, size=16, pen=pen))
 
     def deleteGraphicItems(self):
         logger.debug(f'deleting scale {len(self.graphicItems)} items')
         for anItem in self.graphicItems:
-            # print(anItem)
             self.scene.removeItem(anItem)
             del anItem
         self.graphicItems = []
-
-
-
 
 
 class MidiPattern(Flag):

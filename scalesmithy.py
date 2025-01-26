@@ -13,12 +13,13 @@ from collections import deque
 from enum import Enum
 from math import sin, cos, pi
 
-from PyQt6.QtCore import (QSize, Qt, QPoint, QSettings, QRegularExpression, QUrl, QTimer)
-from PyQt6.QtGui import QAction, QIcon, QPainter, QRegularExpressionValidator
+from PyQt6.QtCore import QSize, Qt, QPointF, QSettings, QRegularExpression, QUrl, QTimer
+from PyQt6.QtGui import QAction, QIcon, QPainter, QRegularExpressionValidator, QTransform, QPixmap
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
-from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QMessageBox, QDialog, QDialogButtonBox, QVBoxLayout, QLabel, QRadioButton, \
+from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QMessageBox, \
+    QDialog, QDialogButtonBox, QVBoxLayout, QLabel, QRadioButton, \
     QComboBox, QWidgetAction, QCheckBox, QGridLayout, QHBoxLayout, QPushButton, QButtonGroup, \
-    QGroupBox, QLineEdit, QTextBrowser, QFileDialog, QListWidget, QListWidgetItem
+    QGroupBox, QLineEdit, QTextBrowser, QFileDialog, QListWidget, QListWidgetItem, QGraphicsPixmapItem
 
 import mido
 import argparse
@@ -35,25 +36,12 @@ lines = [int(line.strip()) for line in args.tlines.split(",")] if args.tlines el
 
 # Setup logger with dynamic filtering
 logger = setup_logger(
-        log_level=logging.DEBUG,  # Always set global level to DEBUG
+        log_level=args.log_level,  # Always set global level to DEBUG
         filter_params={
-            "tclass": args.tclass,
-            "tmethod": args.tmethod,
+            "tname": args.tname,
+            "tfunc": args.tfunc,
             "tlines": lines,  },  )
-#
-# parser = argparse.ArgumentParser(
-#         prog='Scale smithy',
-#         description='Musical Scale analysis Application',
-#         epilog='-by Keith Smith')
-# parser.add_argument("-loglevel", nargs=1,
-#                     default=["INFO"], help="Enter INFO, DEBUG, WARNING, CRITICAL, or ERROR ")
 
-# args = parser.parse_args()
-
-
-
-# logging.basicConfig(level=args.loglevel[0], handlers=[logging.StreamHandler()])
-# logger = logging.getLogger(__name__)
 
 from musicalclasses import Scale, Chorder, StradellaBass, ChordLevel, ChordSymbol, MidiPattern
 from utils import drawText, drawCircle, Pos, Brushes, Pens, CircleGraphicsItem
@@ -463,7 +451,7 @@ class PrefEditorDlg(QDialog):
             self.b3.setChecked(True)
         cdlayout.addWidget(self.b3)
 
-        self.b4 = QRadioButton("All chords")
+        self.b4 = QRadioButton("All chords (via drop down list)")
         if self.chordLevel == ChordLevel.ALL:
             self.b4.setChecked(True)
         cdlayout.addWidget(self.b4)
@@ -789,8 +777,11 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("santabayanian", "ScaleSmithy")
         logger.info(self.settings.fileName())
         priScaleName, priScaleMode, priScaleKey, refScaleName, refScaleMode, refScaleKey = self.readSettings()
+        self.resize(QSize(850, 1100))
         self.setStyleSheet("QMainWindow { border: 1px solid black; }")
         self.angOffset = float(self.rootPos.value)
+
+        self._cornerPm = QPixmap("resources/corners.png")
 
         self.chromeCircleGraphics = []
         self.scalegraphics = []
@@ -805,13 +796,21 @@ class MainWindow(QMainWindow):
         self.modeGI = None
 
         # set the graphics scene size and the app window size
-        self.scene = QGraphicsScene(-400, -500, 800, 1000)
+        self.scene = QGraphicsScene(-420, -490, 840, 980)
         self.view = QGraphicsView(self.scene)
+
+        self.fixyxfm = QTransform()
+        self.fixyxfm.scale(1, -1)
+        self.view.setTransform(self.fixyxfm)
+
+        self.drawCorners()
 
         self.chorder = Chorder(self.scene, self.chordSymbology, self.chordNameLevel)
 
         if len(self.scales) == 0:
             self.scales = self.defaultScales()
+
+        self.scaleCenterPt = QPointF(0, 20)
 
         self.primaryScale = Scale(priScaleName, self.scales[priScaleName], self.scene)
         self.primaryScale.mode = priScaleMode
@@ -926,19 +925,20 @@ class MainWindow(QMainWindow):
         # Pens for lines
         self.pen = Pens()
 
+        # Add the view to the window
+        self.setCentralWidget(self.view)
+
         #Qtimer for random run
         self.timer = QTimer(self, timeout=self.update_ran)
 
-        self.stradella =  StradellaBass(self.scene, self.pen)
+        self.stradella =  StradellaBass(self.scene, 10, -410, self.pen)
 
         # draw chromatic circle and stradella layout 
-        self.drawChromCircle()
-        self.stradella.draw_Stradella(0, 420,
-                                      self.primaryScale.noteSemitonePositions,
+        self.drawChromCircle(centerPt=self.scaleCenterPt)
+        self.stradella.draw_Stradella(self.primaryScale.noteSemitonePositions,
                                       self.showStradella)
 
-        # Add the view to the window and draw the scale.  Also draw reference scale if it exists
-        self.setCentralWidget(self.view)
+        # draw the scale.  Also draw reference scale if it exists
         self.drawScale()
 
     def defaultScales(self):
@@ -1015,7 +1015,7 @@ class MainWindow(QMainWindow):
         "read settings from config file ($HOME/.config/santabayanian/scaleTool.conf"
         self.settings.beginGroup("MainWindow")
         self.resize(self.settings.value("size", QSize(800, 1000)))
-        self.move(self.settings.value("pos", QPoint(200, 200)))
+        self.move(self.settings.value("pos", QPointF(200, 200)))
         self.showStradella = ("true" == self.settings.value("showStradella", 'true'))
         self.settings.endGroup()
         self.settings.beginGroup("chromCir")
@@ -1127,7 +1127,7 @@ class MainWindow(QMainWindow):
                 for acir in self.chromeCircleGraphics:
                     if isinstance(acir, CircleGraphicsItem):
                         acir.setSelectable(True)
-                        if acir.noteId in self.primaryScale.sindx and dlg.currentscale.isChecked():
+                        if acir.noteId in self.primaryScale.noteSemitonePositions and dlg.currentscale.isChecked():
                             acir.setSelectedState(True)
                 self.primaryScale.deleteGraphicItems()
             else:
@@ -1225,9 +1225,9 @@ class MainWindow(QMainWindow):
             self.rootPos = dlg.rootPos
             self.angOffset = float(self.rootPos.value)
             self.showStradella = dlg.showBassChkBox.isChecked()
-            self.stradella.draw_Stradella(0, 420, self.primaryScale.noteSemitonePositions, self.showStradella)
+            self.stradella.draw_Stradella( self.primaryScale.noteSemitonePositions, self.showStradella)
             self.drawTitle()
-            self.drawChromCircle()
+            self.drawChromCircle(centerPt=self.scaleCenterPt)
             self.drawScale()
 
 
@@ -1258,6 +1258,7 @@ class MainWindow(QMainWindow):
         tmp = self.primaryScale
         self.primaryScale = copy.copy(self.refScale)
         self.refScale = tmp
+        self.buildModeMenu()
         self.drawScale()
         self.drawTitle()
 
@@ -1297,6 +1298,9 @@ class MainWindow(QMainWindow):
         for akey in Scale.allKeys:
             anAction = QWidgetAction(self)
             aLbl = QLabel(akey)
+            aLbl.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            aLbl.setIndent(20)
+            aLbl.setFixedWidth(80)
             aLbl.setStyleSheet("font-size: 12pt;")
             anAction.setDefaultWidget(aLbl)
 
@@ -1338,23 +1342,51 @@ class MainWindow(QMainWindow):
         cont_dialog = ContactDlg()
         cont_dialog.exec()
 
+    def drawCorners(self):
+        # Uses self._cornerPm to draw corners
+        xfm = [QTransform().scale(-0.25, -0.25), #Top left
+               QTransform().scale(0.25, -0.25), #top right
+               QTransform().scale(-0.25, 0.25), #bottom left
+               QTransform().scale(0.25, 0.25)] # bottom riht
+        cornerGPM = QGraphicsPixmapItem(self._cornerPm)
+        # w=375.0 h=367.0
+        # 0.25 * is w=93.75 h=91.75
+        w = 0.25*cornerGPM.boundingRect().width()
+        h = 0.25*cornerGPM.boundingRect().height()
+        print(f"w={w} h={h}")
+        position = [self.scene.sceneRect().bottomLeft()  + QPointF(w , 0), #Top left
+                    self.scene.sceneRect().bottomRight()    + QPointF(-w  , 0),  #Top right
+                    self.scene.sceneRect().topLeft()     + QPointF(w , 0),  #Bottom left
+                    self.scene.sceneRect().topRight() + QPointF(-w , 0)] #Bottom right
+
+        for indx in range(4):
+            cornerGPM = QGraphicsPixmapItem(self._cornerPm)
+            cornerGPM.setTransform(xfm[indx])
+            cornerGPM.setPos( position[indx]  )
+            cornerGPM.setZValue(-1)
+            self.scene.addItem(cornerGPM)
+
+
+
 
     def drawTitle(self):
-        if not self.scaleFamilyGI:
-            self.scaleFamilyGI = drawText(self.scene, [-380, -460], f"Family: {self.primaryScale.name}", size=20,
-                                          position=Pos.RIGHT_CENTER)
-        else:
-            self.scaleFamilyGI.setPlainText(f"Family: {self.primaryScale.name}")
+        if  self.scaleFamilyGI:
+            self.scene.removeItem(self.scaleFamilyGI)
+            del self.scaleFamilyGI
 
-        if not self.modeGI:
-            self.modeGI = drawText(self.scene, [-380, -420], f"Mode: {self.primaryScale.mode}", size=20,
-                                   position=Pos.RIGHT_CENTER)
-        else:
-            self.modeGI.setPlainText(f"Mode: {self.primaryScale.mode}")
+        self.scaleFamilyGI = drawText(self.scene, QPointF(-380, 440), f"Family: {self.primaryScale.name}", size=20,
+                                          position=Pos.LEFT_CENTER)
 
-        self.chorder.drawChordKey(300, -440)
+        if  self.modeGI:
+            self.scene.removeItem(self.modeGI)
+            del self.modeGI
 
-    def drawChromCircle(self, cx=0, cy=0, dia=600, pen=None):
+        self.modeGI = drawText(self.scene, QPointF(-380, 410), f"Mode: {self.primaryScale.mode}", size=20,
+                                   position=Pos.LEFT_CENTER)
+        
+        self.chorder.drawChordKey(380, 410)
+
+    def drawChromCircle(self, centerPt=QPointF(0,0), dia=600, pen=None):
         "this method draws the chromatic circle with intervals identified"
         if not pen:
             pen = self.pen.black
@@ -1371,18 +1403,19 @@ class MainWindow(QMainWindow):
         intervals = ["Root", "min 2nd", "Maj 2nd", "min 3rd", "Maj 3rd", "Perfect\n 4th", "Tritone", "Perfect\n 5th",
                      "Min 6th", "Maj 6th", "min 7th", "Maj 7th"]
 
-        drawCircle(self.scene, cx, cy, dia, pen)
-        for indx, ang in enumerate([i * 30 for i in range(12)]):
+        drawCircle(self.scene, centerPt, dia, pen)
+        for indx, ang in enumerate([-i * 30 for i in range(12)]):
             rad = pi * (ang + self.angOffset) / 180
-            x = cx + r * cos(rad)
-            y = cy + r * sin(rad)
-            tx = cx + rt * cos(rad)
-            ty = cy + rt * sin(rad)
+            logger.debug(f"Angle is really {ang + self.angOffset}")
+            x = centerPt.x() + r * cos(rad)
+            y = centerPt.y() + r * sin(rad)
+            tx = centerPt.x() + rt * cos(rad)
+            ty = centerPt.y() + rt * sin(rad)
             self.chromeCircleGraphics.append(
-                    drawCircle(self.scene, x, y, ndia, self.pen.black, self.brush.white, noteId=indx,
+                    drawCircle(self.scene, QPointF(x, y), ndia, self.pen.black, self.brush.white, noteId=indx,
                                acceptMousebuttons=self.scaleEditMode))
-            self.chromeCircleGraphics.append(drawText(self.scene, [tx, ty], intervals[indx],
-                                                      size=12, position=Pos.RADIAL_OUT, refPt=[cx, cy]))
+            self.chromeCircleGraphics.append(drawText(self.scene, QPointF(tx, ty), intervals[indx],
+                                                      size=12, position=Pos.RADIAL_OUT, refPt=centerPt, txtWidth=-1))
 
     def getSelectedNotes(self):
         selnotes = []
@@ -1401,16 +1434,11 @@ class MainWindow(QMainWindow):
 
 
     def drawScale(self):
-
-        x0 = 0
-        y0 = 0
         rmax = 300
-        angOffset = self.angOffset
         pen = self.pen.black
-        self.primaryScale.drawScale(x0, y0, rmax, angOffset, pen, self.chordNameLevel, self.chorder)
-        self.stradella.draw_Stradella(0, 420,
-                                      self.primaryScale.noteSemitonePositions,
-                                      self.showStradella)
+        self.primaryScale.drawScale(self.scaleCenterPt,
+                                    rmax, self.angOffset, pen, self.chordNameLevel, self.chorder)
+        self.stradella.draw_Stradella(self.primaryScale.noteSemitonePositions, self.showStradella)
 
         if self.refScale:
             self.drawRefScale()
@@ -1428,7 +1456,7 @@ class MainWindow(QMainWindow):
         rmax = 200
         angOffset = self.angOffset
         pen = self.pen.red
-        self.refScale.drawScale(x0, y0, rmax, angOffset, pen, self.chordNameLevel, self.chorder, alignNote=self.primaryScale.key)
+        self.refScale.drawScale(self.scaleCenterPt, rmax, angOffset, pen, self.chordNameLevel, self.chorder, alignNote=self.primaryScale.key)
 
     def print(self):
         printer = QPrinter()
@@ -1436,6 +1464,10 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QPrintDialog.DialogCode.Accepted:
             #pixmap = QPixmap(self.view.viewport().size())
             painter = QPainter(printer)
+            pxfm = QTransform()
+            pxfm.scale(1, -1)
+            pxfm.translate(10, -self.view.viewport().height())
+            painter.setTransform(pxfm)
             #self.view.render(painter)
             #painter.drawPixmap(0, 0, pixmap)
             self.scene.render(painter)
