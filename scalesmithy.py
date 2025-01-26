@@ -1456,7 +1456,11 @@ class MainWindow(QMainWindow):
         rmax = 200
         angOffset = self.angOffset
         pen = self.pen.red
-        self.refScale.drawScale(self.scaleCenterPt, rmax, angOffset, pen, self.chordNameLevel, self.chorder, alignNote=self.primaryScale.key)
+        self.refScale.drawScale(self.scaleCenterPt,
+                                rmax,
+                                angOffset, pen, self.chordNameLevel,
+                                self.chorder, alignNote=self.primaryScale.key,
+                                chordTextDepthFactor=0.50)
 
     def print(self):
         printer = QPrinter()
