@@ -1308,22 +1308,25 @@ class MainWindow(QMainWindow):
             anAction.triggered.connect(self.setKey)
 
     def setScale(self):
-        # self.currentScale = self.sender().text()
         self.primaryScale.deleteGraphicItems()
         key = self.primaryScale.key
-        self.primaryScale = Scale(self.sender().text(), self.scales[self.sender().text()], self.scene)
+        # .replace('&', '') is Fix for KDE  that adds '&' to text
+        self.primaryScale = Scale(self.sender().text().replace('&', ''),
+                                  self.scales[self.sender().text().replace('&', '')], self.scene)
         self.primaryScale.key = key
         self.buildModeMenu()
         self.drawScale()
 
     def setMode(self):
-        self.currentMode = self.sender().text()
-        self.primaryScale.mode = self.sender().text()
+        # added .replace('&', '') to work around KDE adding '&'
+        self.currentMode = self.sender().text().replace('&', '')
+        self.primaryScale.mode = self.sender().text().replace('&', '')
         self.drawTitle()
         self.drawScale()
 
     def setKey(self):
-        self.primaryScale.key = self.sender().defaultWidget().text()
+        # .replace('&', '') is Fix for KDE  that adds '&' to text
+        self.primaryScale.key = self.sender().defaultWidget().text().replace('&', '')
         self.drawScale()
 
     def about(self):
