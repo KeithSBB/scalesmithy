@@ -1468,19 +1468,41 @@ class MainWindow(QMainWindow):
     def print(self):
         printer = QPrinter()
         dialog = QPrintDialog(printer, self)
+
         if dialog.exec() == QPrintDialog.DialogCode.Accepted:
-            #pixmap = QPixmap(self.view.viewport().size())
+            # Reset margins to zero
+            layout = printer.pageLayout()
+            layout.setMargins(QMarginsF(0, 0, 0, 0))
+            printer.setPageLayout(layout)
+
             painter = QPainter(printer)
+
+            page_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
+            scene_rect = self.scene.sceneRect()
+
+            # Calculate the centered position
+            centered_x = page_rect.left() + (page_rect.width() - scene_rect.width()) / 2
+            centered_y = page_rect.top() + (page_rect.height() - scene_rect.height()) / 2
+
             pxfm = QTransform()
             pxfm.scale(1, -1)
-            pxfm.translate(10, -self.view.viewport().height())
+            pxfm.translate(centered_x, -(centered_y + (scene_rect.height())))
             painter.setTransform(pxfm)
-            #self.view.render(painter)
-            #painter.drawPixmap(0, 0, pixmap)
-            self.scene.render(painter)
-            painter.end()
 
-            # Print the pixmap  # pixmap.print_(printer)
+            # paperRect is the physical sheet, pageRect is the printable zone
+            # Use pageRect to ensure we stay within hardware limitations
+            target_rect = printer.pageRect(QPrinter.Unit.DevicePixel)
+
+            # Render the scene
+            # We pass target_rect as the second argument (the target)
+            self.scene.render(
+                painter,
+                target_rect,
+                self.scene.sceneRect(),
+                Qt.AspectRatioMode.KeepAspectRatio
+            )
+
+            painter.end()
 
     def image(self):
         fileNameInfo = QFileDialog.getSaveFileName(self, "Save Image File", "", "png, jpeg, bmp")
