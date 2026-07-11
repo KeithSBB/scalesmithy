@@ -1,5 +1,7 @@
 # Scale Smithy
-NOTE:  Thus software is prereleased!  Installation methods don't work yet
+NOTE:  Thus software is BETA level (prerelease)!  Installation methods don't always work right.
+I'm only able to test and develop on the Linux operating system (Fedora 44).  While it should work on a properly setup Windows or MacOS machine I have no way of troubleshooting if it does not.
+
 A graphical tool for analysis of musical scales.
 
 ![Screenshot.png](help/Screenshot.png)
