@@ -1505,12 +1505,17 @@ class MainWindow(QMainWindow):
             painter.end()
 
     def image(self):
-        fileNameInfo = QFileDialog.getSaveFileName(self, "Save Image File", "", "png, jpeg, bmp")
-        if len(fileNameInfo[0]) > 0:
+        fileNameInfo = QFileDialog.getSaveFileName(
+            self, "Save Image File", "",
+            "PNG (*.png);;JPEG (*.jpg *.jpeg);;BMP (*.bmp)"
+        )
+        if fileNameInfo[0]:
             pixmap = self.grab()
-            clipboard = QApplication.instance().clipboard()
-            pixmap.save(fileNameInfo[0], fileNameInfo[1])
-
+            # Let Qt pick format from the extension (or pass "PNG"/"JPEG"/"BMP")
+            pixmap.save(fileNameInfo[0])
+        else:
+            logger.info("Empty file")
+        
     def copy(self):
         pixmap = self.grab()
         clipboard = QApplication.instance().clipboard()
