@@ -13,7 +13,7 @@ from collections import deque
 from enum import Enum
 from math import sin, cos, pi
 
-from PyQt6.QtCore import QSize, Qt, QPointF, QSettings, QRegularExpression, QUrl, QTimer
+from PyQt6.QtCore import QSize, Qt, QPointF, QSettings, QRegularExpression, QUrl, QTimer, QMarginsF
 from PyQt6.QtGui import QAction, QIcon, QPainter, QRegularExpressionValidator, QTransform, QPixmap
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QMessageBox, \
